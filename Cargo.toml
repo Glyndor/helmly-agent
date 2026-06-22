@@ -52,7 +52,7 @@ uuid = { version = "1", features = ["v7", "serde"] }
 # system interaction
 nix = { version = "0.31", features = ["process", "signal", "fs"] }
 
-podup = { git = "https://github.com/Glyndor/podup", tag = "v0.9.0" }
+podup = { git = "https://github.com/Glyndor/podup", tag = "v1.1.1" }
 
 [workspace]
 
