@@ -85,13 +85,13 @@ jobs:
 
       - name: Sign agent binary
         env:
-          RELEASE_SIGN_KEY: ${{ secrets.RELEASE_SIGN_KEY }}
+          GLYNDOR_RELEASE_ED25519_KEY: ${{ secrets.GLYNDOR_RELEASE_ED25519_KEY }}
         run: |
           pip install --quiet cryptography
           BINARY="target/${{ matrix.rust-target }}/release/lynx-agent"
           ARTIFACT="lynx-agent-linux-${{ matrix.arch }}"
           cp "$BINARY" "$ARTIFACT"
-          python3 .github/scripts/sign.py "$RELEASE_SIGN_KEY" "$ARTIFACT"
+          python3 .github/scripts/sign.py "$GLYNDOR_RELEASE_ED25519_KEY" "$ARTIFACT"
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
