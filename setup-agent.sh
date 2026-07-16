@@ -112,6 +112,16 @@ _cleanup_existing() {
     nft delete table inet helmly-agent 2>/dev/null || true
     rm -f /etc/nftables-helmly-agent.conf
 
+    # A stale `include` line for either brand's conf filename left in
+    # /etc/nftables.conf would point at the file just removed above. Since
+    # `nft -f` treats a missing literal include as fatal, that dangling line
+    # would make every future nftables.service reload/reboot fail, potentially
+    # leaving the host with no firewall loaded. Strip it so reinstalling on a
+    # host previously set up under either brand starts clean.
+    if [[ -f /etc/nftables.conf ]]; then
+        sed -i '\#include ".*/etc/nftables-lynx-agent\.conf"#d; \#include ".*/etc/nftables-helmly-agent\.conf"#d' /etc/nftables.conf
+    fi
+
     # /etc/glyndor/helmly is shared with the dashboard on co-located VPSes.
     # Preserve files that belong to the dashboard so the dashboard containers
     # are not disrupted by an agent reinstall. The agent-specific content is
