@@ -176,9 +176,9 @@ fn render_ruleset(r: &Ruleset) -> String {
     let container_forward_rules = "\n        # New connections to published container ports (Netavark DNAT rewrites dst to 10.89.x.x)\n        ip daddr 10.89.0.0/16 ct state new accept\n\n        # Outbound traffic from Podman containers (package installs, GitHub, cert renewals, etc.)\n        iifname \"podman*\" accept\n";
 
     // WireGuard forward rules — dashboard VPS only.
-    // Backend container needs to route through wg-lynx-dash to reach remote agents.
+    // Backend container needs to route through wg-helmly-dash to reach remote agents.
     let dashboard_wg_forward_rules = if r.dashboard_port.is_some() {
-        "\n        # Backend container traffic to/from WireGuard (dashboard <-> agents)\n        oifname \"wg-lynx-dash\" accept\n        iifname \"wg-lynx-dash\" accept\n"
+        "\n        # Backend container traffic to/from WireGuard (dashboard <-> agents)\n        oifname \"wg-helmly-dash\" accept\n        iifname \"wg-helmly-dash\" accept\n"
     } else {
         ""
     };
@@ -626,11 +626,11 @@ mod tests {
             "container outbound forward rule missing when dashboard_port set"
         );
         assert!(
-            out.contains("oifname \"wg-lynx-dash\" accept"),
+            out.contains("oifname \"wg-helmly-dash\" accept"),
             "WireGuard outbound forward rule missing when dashboard_port set"
         );
         assert!(
-            out.contains("iifname \"wg-lynx-dash\" accept"),
+            out.contains("iifname \"wg-helmly-dash\" accept"),
             "WireGuard inbound forward rule missing when dashboard_port set"
         );
     }
@@ -640,7 +640,7 @@ mod tests {
         let r = minimal_ruleset();
         let out = render_ruleset(&r);
         assert!(
-            !out.contains("wg-lynx-dash"),
+            !out.contains("wg-helmly-dash"),
             "WireGuard forward rules should not appear when dashboard_port is None"
         );
     }

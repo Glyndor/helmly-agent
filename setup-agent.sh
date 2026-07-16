@@ -44,10 +44,10 @@ log_section() { echo -e "\n${BOLD}${CYAN}=== $* ===${RESET}"; }
 HELMLY_DIR="/etc/glyndor/helmly"
 AGENT_CONF="$HELMLY_DIR/agent.env"
 HELMLY_WG_DIR="$HELMLY_DIR/wireguard"
-LYNX_WG_CONF="$HELMLY_WG_DIR/lynx-wg.conf"   # source of truth (spec path)
+HELMLY_WG_CONF="$HELMLY_WG_DIR/helmly-wg.conf"   # source of truth (spec path)
 WG_DIR="/etc/wireguard"
-WG_CONF_LINK="$WG_DIR/wg-lynx-agent.conf"   # symlink for wg-quick compatibility
-WG_IFACE="wg-lynx-agent"
+WG_CONF_LINK="$WG_DIR/wg-helmly-agent.conf"   # symlink for wg-quick compatibility
+WG_IFACE="wg-helmly-agent"
 AGENT_WG_IP=""           # set from dashboard-assigned IP during onboarding prompt
 DASHBOARD_WG_IP="10.100.0.1"
 WG_PORT=51820
@@ -85,7 +85,7 @@ _cleanup_existing() {
     if ip link show "$WG_IFACE" &>/dev/null; then
         wg-quick down "$WG_IFACE" 2>/dev/null || ip link delete "$WG_IFACE" 2>/dev/null || true
     fi
-    rm -f "$WG_CONF_LINK" "$LYNX_WG_CONF"
+    rm -f "$WG_CONF_LINK" "$HELMLY_WG_CONF"
 
     # Remove PostgreSQL container + data.
     # Use stop+rm (not rm -f) so netavark tears down iptables port-forwarding rules
@@ -989,7 +989,7 @@ LoadCredential=database-url:/etc/glyndor/helmly/credentials/database-url
 LoadCredential=internal-token:/etc/glyndor/helmly/credentials/internal-token
 LoadCredential=helmly-dashboard-pubkey:/etc/glyndor/helmly/credentials/helmly-dashboard-pubkey
 LoadCredential=sync-token:/etc/glyndor/helmly/credentials/sync-token
-LoadCredential=lynx-wg-psk:-/etc/glyndor/helmly/credentials/lynx-wg-psk
+LoadCredential=helmly-wg-psk:-/etc/glyndor/helmly/credentials/helmly-wg-psk
 LoadCredential=helmly-kek:/etc/glyndor/helmly/credentials/helmly-kek
 
 # Minimal hardening — agent is a privileged system daemon (package management,
@@ -1010,11 +1010,11 @@ log_ok "Services installed: helmly-agent-postgres.service, helmly-agent.service"
 log_section "Configuring WireGuard tunnel (agent ↔ dashboard)"
 
 # Generate agent keypair
-# LYNX_WG_PRIVKEY allows test environments to pre-seed the WG private key so the
+# HELMLY_WG_PRIVKEY allows test environments to pre-seed the WG private key so the
 # pubkey can be registered in the dashboard before the script runs.
-if [[ -n "${LYNX_WG_PRIVKEY:-}" ]]; then
-    AGENT_PRIV="${LYNX_WG_PRIVKEY}"
-    unset LYNX_WG_PRIVKEY
+if [[ -n "${HELMLY_WG_PRIVKEY:-}" ]]; then
+    AGENT_PRIV="${HELMLY_WG_PRIVKEY}"
+    unset HELMLY_WG_PRIVKEY
 else
     AGENT_PRIV=$(wg genkey)
 fi
@@ -1066,7 +1066,7 @@ ${KEEPALIVE_LINE}"
 fi
 
 mkdir -p "$HELMLY_WG_DIR"
-cat > "$LYNX_WG_CONF" << EOF
+cat > "$HELMLY_WG_CONF" << EOF
 [Interface]
 PrivateKey = ${AGENT_PRIV}
 Address = ${AGENT_WG_IP}/32
@@ -1074,17 +1074,17 @@ Address = ${AGENT_WG_IP}/32
 ${WG_PEER_BLOCK}
 EOF
 
-chmod 600 "$LYNX_WG_CONF"
-chown "${HELMLY_AGENT_USER}:${HELMLY_AGENT_USER}" "$LYNX_WG_CONF"
+chmod 600 "$HELMLY_WG_CONF"
+chown "${HELMLY_AGENT_USER}:${HELMLY_AGENT_USER}" "$HELMLY_WG_CONF"
 
 # Symlink into /etc/wireguard/ for wg-quick compatibility
 mkdir -p "$WG_DIR"
-ln -sf "$LYNX_WG_CONF" "$WG_CONF_LINK"
+ln -sf "$HELMLY_WG_CONF" "$WG_CONF_LINK"
 
 # For local agent (same VPS as dashboard): add this agent as a peer in the
 # dashboard's WireGuard config so the tunnel is fully bi-directional immediately.
 # PSK and AGENT_PUB are available here; PSK is zeroized after this block.
-_DASH_WG_CONF="/etc/wireguard/wg-lynx-dash.conf"
+_DASH_WG_CONF="/etc/wireguard/wg-helmly-dash.conf"
 if [[ -f "$_DASH_WG_CONF" ]]; then
     # Remove old placeholder comment + any existing [Peer] blocks for this agent
     sed -i '/^# Peer block added by agent/,/^# AllowedIPs.*$/d' "$_DASH_WG_CONF" 2>/dev/null || true
@@ -1093,20 +1093,20 @@ if [[ -f "$_DASH_WG_CONF" ]]; then
     printf '\n[Peer]\nPublicKey = %s\nPresharedKey = %s\nAllowedIPs = %s/32\n' \
         "$AGENT_PUB" "$PSK" "$AGENT_WG_IP" >> "$_DASH_WG_CONF"
     # Live-update the running WireGuard interface (no restart needed)
-    if wg set wg-lynx-dash peer "$AGENT_PUB" preshared-key <(printf '%s' "$PSK") allowed-ips "$AGENT_WG_IP/32" 2>/dev/null; then
-        log_ok "Agent added as peer to dashboard WireGuard (wg-lynx-dash)"
+    if wg set wg-helmly-dash peer "$AGENT_PUB" preshared-key <(printf '%s' "$PSK") allowed-ips "$AGENT_WG_IP/32" 2>/dev/null; then
+        log_ok "Agent added as peer to dashboard WireGuard (wg-helmly-dash)"
     else
-        log_warn "Could not live-add peer to wg-lynx-dash — add agent pubkey to dashboard manually"
+        log_warn "Could not live-add peer to wg-helmly-dash — add agent pubkey to dashboard manually"
     fi
 fi
 unset _DASH_WG_CONF
 
 # Persist PSK as a separate credential for systemd LoadCredential tmpfs isolation.
 # The wg.conf already contains it for tunnel setup; this credential lets the agent
-# Rust code read the PSK from /run/credentials/helmly-agent.service/lynx-wg-psk
+# Rust code read the PSK from /run/credentials/helmly-agent.service/helmly-wg-psk
 # without accessing the conf file directly.
-printf '%s' "$PSK" > /etc/glyndor/helmly/credentials/lynx-wg-psk
-chmod 600 /etc/glyndor/helmly/credentials/lynx-wg-psk
+printf '%s' "$PSK" > /etc/glyndor/helmly/credentials/helmly-wg-psk
+chmod 600 /etc/glyndor/helmly/credentials/helmly-wg-psk
 
 AGENT_PRIV="$("$BINARY_PATH" gen-rand 32)"  # overwrite
 PSK="$("$BINARY_PATH" gen-rand 32)"
@@ -1143,8 +1143,8 @@ if [[ "$IS_DASHBOARD_VPS" == "true" ]]; then
 "
     DASHBOARD_FORWARD_WG_NFT="
         # Backend container traffic to/from WireGuard (dashboard <-> agents)
-        oifname \"wg-lynx-dash\" accept
-        iifname \"wg-lynx-dash\" accept"
+        oifname \"wg-helmly-dash\" accept
+        iifname \"wg-helmly-dash\" accept"
 fi
 
 # Bootstrap ruleset — uses same chain names as the Rust agent (helmly-base, helmly-forward, helmly-output).
