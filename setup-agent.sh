@@ -6,7 +6,7 @@
 #   Installs the Lynx Agent on a VPS. Sets up:
 #     - System user: helmly-agent (privileged, not a login shell)
 #     - subuid/subgid ranges for rootless Podman tenant isolation
-#     - PostgreSQL container (via podman run, lynx-agent-db network)
+#     - PostgreSQL container (via podman run, helmly-agent-db network)
 #     - helmly-agent binary as a systemd service with required capabilities
 #     - WireGuard tunnel to the Lynx Dashboard
 #     - nftables: allows only WireGuard inbound, blocks everything else
@@ -53,8 +53,8 @@ DASHBOARD_WG_IP="10.100.0.1"
 WG_PORT=51820
 AGENT_PORT=9090
 HELMLY_AGENT_USER="helmly-agent"
-PG_NETWORK="lynx-agent-db"
-PG_CONTAINER="lynx-agent-postgres"
+PG_NETWORK="helmly-agent-db"
+PG_CONTAINER="helmly-agent-postgres"
 PG_IMAGE="docker.io/percona/percona-distribution-postgresql@sha256:71cce6ed329d4108461eeaa40fb0c1517bee2e0f78051cee40a4b010eed448c3"
 PG_DB="helmly_agent"
 PG_SUBNET="172.20.100.0/24"
@@ -93,11 +93,11 @@ _cleanup_existing() {
     # stale DNAT rules that silently capture traffic for the next install.
     podman stop --time 10 "$PG_CONTAINER" 2>/dev/null || true
     podman rm "$PG_CONTAINER" 2>/dev/null || true
-    podman volume rm lynx-agent-pg-data 2>/dev/null || true
+    podman volume rm helmly-agent-pg-data 2>/dev/null || true
     podman network rm "$PG_NETWORK" 2>/dev/null || true
 
     # Remove Podman secrets
-    for s in lynx-agent-pg-root lynx-agent-pg-pass lynx-agent-internal-token lynx-agent-database-url; do
+    for s in helmly-agent-pg-root helmly-agent-pg-pass helmly-agent-internal-token helmly-agent-database-url; do
         podman secret rm "$s" 2>/dev/null || true
     done
 
@@ -721,7 +721,7 @@ loginctl enable-linger "$HELMLY_AGENT_USER" 2>/dev/null || true
 
 # --- subuid / subgid allocation for tenant isolation -----------------------
 #
-# Each tenant (lynx-tenant-{id}) gets 65536 subuids/subgids.
+# Each tenant (helmly-tenant-{id}) gets 65536 subuids/subgids.
 # The agent user itself needs a base allocation for its own Podman.
 
 log_section "Configuring subuid/subgid ranges"
@@ -743,7 +743,7 @@ log_section "Generating agent secrets"
 log_info "PostgreSQL root password..."
 (
     PG_ROOT=$("$BINARY_PATH" gen-rand 32)
-    printf '%s' "$PG_ROOT" | podman secret create lynx-agent-pg-root - >/dev/null
+    printf '%s' "$PG_ROOT" | podman secret create helmly-agent-pg-root - >/dev/null
     PG_ROOT="$("$BINARY_PATH" gen-rand 32)"
 )
 
@@ -753,11 +753,11 @@ chmod 700 /etc/glyndor/helmly/credentials
 # PG_PASS stays in outer shell until DATABASE_URL can be written (needs container IP).
 # Zeroized after writing the credential file.
 PG_PASS=$("$BINARY_PATH" gen-rand 32)
-printf '%s' "$PG_PASS" | podman secret create lynx-agent-pg-pass - >/dev/null
+printf '%s' "$PG_PASS" | podman secret create helmly-agent-pg-pass - >/dev/null
 
 log_info "Internal bearer token..."
 INTERNAL_TOKEN=$("$BINARY_PATH" gen-rand 32)
-printf '%s' "$INTERNAL_TOKEN" | podman secret create lynx-agent-internal-token - >/dev/null
+printf '%s' "$INTERNAL_TOKEN" | podman secret create helmly-agent-internal-token - >/dev/null
 
 log_info "KEK (Key Encryption Key)..."
 mkdir -p /etc/glyndor/helmly/credentials
@@ -798,7 +798,7 @@ PG_INIT_DIR="$HELMLY_DIR/pg-init"
 mkdir -p "$PG_INIT_DIR"
 
 cat > "$PG_INIT_DIR/01-init.sql" << 'PGSQL'
-\set app_pass `cat /run/secrets/lynx-agent-pg-pass`
+\set app_pass `cat /run/secrets/helmly-agent-pg-pass`
 
 CREATE USER helmly_agent_app WITH PASSWORD :'app_pass' NOSUPERUSER NOCREATEDB NOCREATEROLE;
 GRANT CONNECT ON DATABASE helmly_agent TO helmly_agent_app;
@@ -830,22 +830,22 @@ log_section "Starting PostgreSQL for agent"
 # The init SQL (docker-entrypoint-initdb.d) only runs on an empty data dir —
 # a leftover volume causes init to be silently skipped, leaving the app user
 # without the correct password and pg_tde without a keyring.
-if podman volume exists lynx-agent-pg-data 2>/dev/null; then
+if podman volume exists helmly-agent-pg-data 2>/dev/null; then
     log_info "Removing stale PostgreSQL data volume from previous install..."
-    podman volume rm --force lynx-agent-pg-data 2>/dev/null || true
+    podman volume rm --force helmly-agent-pg-data 2>/dev/null || true
 fi
 
 podman run -d \
     --name "$PG_CONTAINER" \
     --network "$PG_NETWORK" \
     --ip "$PG_STATIC_IP" \
-    --secret lynx-agent-pg-root,target=lynx-agent-pg-root \
-    --secret lynx-agent-pg-pass,target=lynx-agent-pg-pass \
+    --secret helmly-agent-pg-root,target=helmly-agent-pg-root \
+    --secret helmly-agent-pg-pass,target=helmly-agent-pg-pass \
     -e POSTGRES_USER=postgres \
     -e POSTGRES_DB="$PG_DB" \
-    -e POSTGRES_PASSWORD_FILE=/run/secrets/lynx-agent-pg-root \
+    -e POSTGRES_PASSWORD_FILE=/run/secrets/helmly-agent-pg-root \
     -e 'POSTGRES_INITDB_ARGS=-c shared_preload_libraries=pg_tde' \
-    -v lynx-agent-pg-data:/data/db \
+    -v helmly-agent-pg-data:/data/db \
     -v "$PG_INIT_DIR:/docker-entrypoint-initdb.d:ro" \
     -v /etc/glyndor/helmly/pg-keyring:/var/pg-keyring \
     --restart unless-stopped \
@@ -950,8 +950,8 @@ After=network.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/bin/podman start lynx-agent-postgres
-ExecStop=/usr/bin/podman stop -t 30 lynx-agent-postgres
+ExecStart=/usr/bin/podman start helmly-agent-postgres
+ExecStop=/usr/bin/podman stop -t 30 helmly-agent-postgres
 
 [Install]
 WantedBy=multi-user.target

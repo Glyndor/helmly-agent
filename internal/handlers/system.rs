@@ -344,7 +344,7 @@ async fn handle_db_rotate_password(
     .map_err(|e| AgentError::Internal(anyhow::anyhow!("ALTER USER: {e}")))?;
 
     let status = std::process::Command::new("podman")
-        .args(["secret", "create", "--replace", "lynx-agent-pg-pass", "-"])
+        .args(["secret", "create", "--replace", "helmly-agent-pg-pass", "-"])
         .stdin(std::process::Stdio::piped())
         .spawn()
         .and_then(|mut child| {
@@ -359,7 +359,7 @@ async fn handle_db_rotate_password(
         .map_err(|e| AgentError::Internal(anyhow::anyhow!("podman secret create: {e}")))?;
 
     if !status.success() {
-        tracing::warn!("failed to update Podman secret lynx-agent-pg-pass — password rotated in DB but secret not updated");
+        tracing::warn!("failed to update Podman secret helmly-agent-pg-pass — password rotated in DB but secret not updated");
     }
 
     // Update /etc/glyndor/helmly/credentials/database-url so systemd LoadCredential
@@ -385,7 +385,7 @@ fn update_database_url_credential(current_url: &str, new_pass: &str) -> anyhow::
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(path, new_url.as_bytes())?;
-    // 600 — readable only by lynx-agent
+    // 600 — readable only by helmly-agent
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
     Ok(())

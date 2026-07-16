@@ -7,8 +7,8 @@ use serde_json::{json, Value};
 
 use super::containers::require_str;
 
-const NGINX_CONTAINER: &str = "lynx-nginx";
-const NGINX_CONFIG_PATH: &str = "/etc/nginx/conf.d/lynx.conf";
+const NGINX_CONTAINER: &str = "helmly-nginx";
+const NGINX_CONFIG_PATH: &str = "/etc/nginx/conf.d/helmly.conf";
 const WEBROOT_PATH: &str = "/var/lib/glyndor/helmly/nginx/webroot";
 
 /// Deploy the nginx reverse-proxy container. Idempotent — removes the old container first
