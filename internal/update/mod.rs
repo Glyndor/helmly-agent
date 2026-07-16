@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use std::path::PathBuf;
 
-const AGENT_BINARY: &str = "/etc/glyndor/helmly/bin/lynx-agent";
+const AGENT_BINARY: &str = "/etc/glyndor/helmly/bin/helmly-agent";
 const CRITICAL_FILE: &str = "/etc/glyndor/helmly/CRITICAL";
 
 /// Download new binary, verify Ed25519 signature, backup to .prev, atomic swap, restart via systemd.
@@ -128,7 +128,7 @@ pub fn spawn_startup_health_guard() {
         let ts = chrono::Utc::now().to_rfc3339();
         let _ = std::fs::write(
             CRITICAL_FILE,
-            format!("timestamp={ts}\ncomponent=lynx-agent\nreason={reason}\n"),
+            format!("timestamp={ts}\ncomponent=helmly-agent\nreason={reason}\n"),
         );
 
         tracing::error!(reason, "critical state — exiting for systemd restart");

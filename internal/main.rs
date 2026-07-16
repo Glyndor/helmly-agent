@@ -466,7 +466,7 @@ async fn heartbeat_handler(
 
 fn agent_logs(follow: bool, errors: bool, since: Option<String>) -> anyhow::Result<()> {
     let mut args = vec![
-        "--unit=lynx-agent".to_string(),
+        "--unit=helmly-agent".to_string(),
         "--no-pager".to_string(),
         "--output=short".to_string(),
     ];

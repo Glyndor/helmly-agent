@@ -4,10 +4,10 @@
 #
 # Description:
 #   Installs the Lynx Agent on a VPS. Sets up:
-#     - System user: lynx-agent (privileged, not a login shell)
+#     - System user: helmly-agent (privileged, not a login shell)
 #     - subuid/subgid ranges for rootless Podman tenant isolation
 #     - PostgreSQL container (via podman run, lynx-agent-db network)
-#     - lynx-agent binary as a systemd service with required capabilities
+#     - helmly-agent binary as a systemd service with required capabilities
 #     - WireGuard tunnel to the Lynx Dashboard
 #     - nftables: allows only WireGuard inbound, blocks everything else
 #
@@ -52,7 +52,7 @@ AGENT_WG_IP=""           # set from dashboard-assigned IP during onboarding prom
 DASHBOARD_WG_IP="10.100.0.1"
 WG_PORT=51820
 AGENT_PORT=9090
-LYNX_AGENT_USER="lynx-agent"
+HELMLY_AGENT_USER="helmly-agent"
 PG_NETWORK="lynx-agent-db"
 PG_CONTAINER="lynx-agent-postgres"
 PG_IMAGE="docker.io/percona/percona-distribution-postgresql@sha256:71cce6ed329d4108461eeaa40fb0c1517bee2e0f78051cee40a4b010eed448c3"
@@ -63,7 +63,7 @@ PG_STATIC_IP="172.20.100.2"  # Fixed IP — agent binary (root) connects directl
 AGENT_ID=""
 
 BIN_DIR="/etc/glyndor/helmly/bin"
-BINARY_PATH="$BIN_DIR/lynx-agent"
+BINARY_PATH="$BIN_DIR/helmly-agent"
 
 # --- Root check -------------------------------------------------------------
 
@@ -77,9 +77,9 @@ fi
 _cleanup_existing() {
     log_section "Removing existing agent installation"
 
-    systemctl disable --now lynx-agent.service 2>/dev/null || true
-    systemctl disable --now lynx-agent-postgres.service 2>/dev/null || true
-    rm -f /etc/systemd/system/lynx-agent-postgres.service
+    systemctl disable --now helmly-agent.service 2>/dev/null || true
+    systemctl disable --now helmly-agent-postgres.service 2>/dev/null || true
+    rm -f /etc/systemd/system/helmly-agent-postgres.service
 
     # Remove WireGuard
     if ip link show "$WG_IFACE" &>/dev/null; then
@@ -102,11 +102,11 @@ _cleanup_existing() {
     done
 
     # Remove systemd units
-    rm -f /etc/systemd/system/lynx-agent.service
+    rm -f /etc/systemd/system/helmly-agent.service
     systemctl daemon-reload
 
     # Remove user (tenant users cleaned separately)
-    userdel -r "$LYNX_AGENT_USER" 2>/dev/null || true
+    userdel -r "$HELMLY_AGENT_USER" 2>/dev/null || true
 
     # Remove nftables table
     nft delete table inet lynx-agent 2>/dev/null || true
@@ -121,7 +121,7 @@ _cleanup_existing() {
 
     rm -rf "$HELMLY_WG_DIR" "$HELMLY_DIR/credentials"
     rm -f  "$AGENT_CONF" "$HELMLY_DIR/agent-id"
-    rm -f  "$BIN_DIR/lynx-agent" "$BIN_DIR/lynx-agent.prev" "$BIN_DIR/lynx-agent-version"
+    rm -f  "$BIN_DIR/helmly-agent" "$BIN_DIR/helmly-agent.prev" "$BIN_DIR/helmly-agent-version"
     rmdir  "$BIN_DIR" "$HELMLY_DIR" 2>/dev/null || true
 
     if [[ -n "$_SAVED_DASH_SIGN_PUBKEY" ]]; then
@@ -164,8 +164,8 @@ log_section "Checking for existing installation"
 existing=false
 # Check for agent-specific markers only — /etc/glyndor/helmly is shared with the dashboard
 # on VPSes that host both. /etc/glyndor/helmly alone does not mean the agent is installed.
-if id "$LYNX_AGENT_USER" &>/dev/null || \
-   systemctl list-unit-files lynx-agent.service 2>/dev/null | grep -q lynx-agent || \
+if id "$HELMLY_AGENT_USER" &>/dev/null || \
+   systemctl list-unit-files helmly-agent.service 2>/dev/null | grep -q helmly-agent || \
    [[ -f "$AGENT_CONF" ]] || podman container exists "$PG_CONTAINER" 2>/dev/null; then
     existing=true
 fi
@@ -188,8 +188,8 @@ if $existing; then
         3)
             echo ""
             log_warn "This will permanently destroy all agent data on this machine."
-            read -rp "Type 'reinstall lynx-agent' to confirm: " confirm
-            if [[ "$confirm" != "reinstall lynx-agent" ]]; then
+            read -rp "Type 'reinstall helmly-agent' to confirm: " confirm
+            if [[ "$confirm" != "reinstall helmly-agent" ]]; then
                 log_error "Confirmation phrase mismatch. Aborting."
                 exit 1
             fi
@@ -309,7 +309,7 @@ _check_remove() {
     fi
 }
 
-_REASON_DOCKER="manages own container network and firewall, bypasses lynx-agent nftables"
+_REASON_DOCKER="manages own container network and firewall, bypasses helmly-agent nftables"
 _REASON_CTR="manages own container network, conflicts with Podman network isolation"
 _REASON_FW="manages own firewall rules outside table inet lynx-agent"
 
@@ -420,7 +420,7 @@ _require_cmd() {
 # upstream repo with a verifiable GPG fingerprint becomes available for noble,
 # replace this with repo-pinned install + fingerprint check.
 _apt_ensure podman         podman
-# openssl replaced by `lynx-agent` subcommands for random/keypair ops.
+# openssl replaced by `helmly-agent` subcommands for random/keypair ops.
 _apt_ensure nft            nftables
 _apt_ensure wg             wireguard-tools
 _apt_ensure curl           curl
@@ -489,7 +489,7 @@ if _version_lt "$_netavark_ver" "$NETAVARK_REQUIRED"; then
         *) log_error "Unsupported arch for netavark upgrade: $_uname_m"; exit 1 ;;
     esac
     NETAVARK_DL="https://github.com/containers/netavark/releases/download/v${NETAVARK_UPSTREAM_VER}/${_na_asset}"
-    NETAVARK_TMP="$(mktemp /tmp/lynx-netavark.XXXXXX.gz)"
+    NETAVARK_TMP="$(mktemp /tmp/helmly-netavark.XXXXXX.gz)"
     if ! curl -fsSL --max-time 120 "$NETAVARK_DL" -o "$NETAVARK_TMP"; then
         log_error "Failed to download netavark from $NETAVARK_DL"
         rm -f "$NETAVARK_TMP"
@@ -528,8 +528,8 @@ if ! grep -q 'firewall_driver.*nftables' /etc/containers/containers.conf 2>/dev/
     {
         grep -v 'network_backend\|firewall_driver\|\[network\]' /etc/containers/containers.conf 2>/dev/null || true
         printf '\n[network]\nnetwork_backend = "netavark"\nfirewall_driver = "nftables"\n'
-    } > /tmp/lynx-containers.conf
-    mv /tmp/lynx-containers.conf /etc/containers/containers.conf
+    } > /tmp/helmly-containers.conf
+    mv /tmp/helmly-containers.conf /etc/containers/containers.conf
     log_ok "Podman configured: netavark backend, nftables firewall driver"
 fi
 
@@ -576,10 +576,10 @@ log_ok "$HELMLY_DIR"
 # --- Download core agent binary ---------------------------------------------
 #
 # The agent binary is needed BEFORE secret generation and UUID generation:
-# both rely on `lynx-agent gen-rand` / `lynx-agent gen-uuid-v7` so the host
+# both rely on `helmly-agent gen-rand` / `helmly-agent gen-uuid-v7` so the host
 # does not need `openssl` or Python's uuid module on minimal systems.
 
-log_section "Downloading lynx-agent binary"
+log_section "Downloading helmly-agent binary"
 
 GITHUB_REPO="Glyndor/panel-agent"
 RELEASE_VERIFY_KEY_B64="APh+kh61dJeT0HzG+KQXELzDjK4ccvqY9K+FptOZ3+Y="
@@ -608,9 +608,9 @@ if ! python3 -c "from cryptography.hazmat.primitives.asymmetric.ed25519 import E
     }
 fi
 
-if [[ -n "${LYNX_RELEASE_BASE:-}" ]]; then
-    # Local/test override — skip GitHub API fetch; binary served from LYNX_RELEASE_BASE.
-    RELEASE_BASE="${LYNX_RELEASE_BASE}"
+if [[ -n "${HELMLY_RELEASE_BASE:-}" ]]; then
+    # Local/test override — skip GitHub API fetch; binary served from HELMLY_RELEASE_BASE.
+    RELEASE_BASE="${HELMLY_RELEASE_BASE}"
     LATEST_AGENT_TAG="local"
     log_info "Using local release base: ${RELEASE_BASE}"
 else
@@ -658,7 +658,7 @@ except Exception as e:
 PYEOF
 }
 
-AGENT_TMP="${BIN_DIR}/lynx-agent.new"
+AGENT_TMP="${BIN_DIR}/helmly-agent.new"
 
 log_info "Downloading agent binary..."
 curl -fsSL --max-time 300 \
@@ -687,10 +687,10 @@ if [[ -n "${_SAVED_AGENT_ID:-}" ]]; then
     AGENT_ID="$_SAVED_AGENT_ID"
     log_ok "Reusing existing Agent ID: $AGENT_ID"
     unset _SAVED_AGENT_ID
-elif [[ -n "${LYNX_AGENT_ID:-}" ]]; then
+elif [[ -n "${HELMLY_AGENT_ID:-}" ]]; then
     # Test/pre-seeded agent ID (allows registering in dashboard before running script).
-    AGENT_ID="${LYNX_AGENT_ID}"
-    unset LYNX_AGENT_ID
+    AGENT_ID="${HELMLY_AGENT_ID}"
+    unset HELMLY_AGENT_ID
     log_ok "Using pre-seeded Agent ID: $AGENT_ID"
 else
     AGENT_ID=$("$BINARY_PATH" gen-uuid-v7)
@@ -702,22 +702,22 @@ log_ok "Agent ID: $AGENT_ID"
 
 # --- Create system user -----------------------------------------------------
 
-log_section "Creating system user: $LYNX_AGENT_USER"
+log_section "Creating system user: $HELMLY_AGENT_USER"
 
-if ! id "$LYNX_AGENT_USER" &>/dev/null; then
+if ! id "$HELMLY_AGENT_USER" &>/dev/null; then
     useradd \
         --system \
         --no-create-home \
         --shell /usr/sbin/nologin \
         --comment "Lynx Agent service user" \
-        "$LYNX_AGENT_USER"
-    log_ok "User created: $LYNX_AGENT_USER"
+        "$HELMLY_AGENT_USER"
+    log_ok "User created: $HELMLY_AGENT_USER"
 else
-    log_warn "User $LYNX_AGENT_USER already exists — skipping"
+    log_warn "User $HELMLY_AGENT_USER already exists — skipping"
 fi
 
 # Enable lingering for rootless Podman (tenant containers persist after session)
-loginctl enable-linger "$LYNX_AGENT_USER" 2>/dev/null || true
+loginctl enable-linger "$HELMLY_AGENT_USER" 2>/dev/null || true
 
 # --- subuid / subgid allocation for tenant isolation -----------------------
 #
@@ -727,13 +727,13 @@ loginctl enable-linger "$LYNX_AGENT_USER" 2>/dev/null || true
 log_section "Configuring subuid/subgid ranges"
 
 # Agent user: 1,000,000 – 1,065,535 (65536 IDs)
-if ! grep -q "^${LYNX_AGENT_USER}:" /etc/subuid 2>/dev/null; then
-    echo "${LYNX_AGENT_USER}:1000000:65536" >> /etc/subuid
-    log_ok "subuid: $LYNX_AGENT_USER → 1000000+65536"
+if ! grep -q "^${HELMLY_AGENT_USER}:" /etc/subuid 2>/dev/null; then
+    echo "${HELMLY_AGENT_USER}:1000000:65536" >> /etc/subuid
+    log_ok "subuid: $HELMLY_AGENT_USER → 1000000+65536"
 fi
-if ! grep -q "^${LYNX_AGENT_USER}:" /etc/subgid 2>/dev/null; then
-    echo "${LYNX_AGENT_USER}:1000000:65536" >> /etc/subgid
-    log_ok "subgid: $LYNX_AGENT_USER → 1000000+65536"
+if ! grep -q "^${HELMLY_AGENT_USER}:" /etc/subgid 2>/dev/null; then
+    echo "${HELMLY_AGENT_USER}:1000000:65536" >> /etc/subgid
+    log_ok "subgid: $HELMLY_AGENT_USER → 1000000+65536"
 fi
 
 # --- Generate agent secrets -------------------------------------------------
@@ -879,7 +879,7 @@ PG_PASS="$("$BINARY_PATH" gen-rand 32)"
 # --- Download agent binary from GitHub Releases ----------------------------
 
 # Agent binary already downloaded earlier — version file gets written below.
-printf '%s' "${LATEST_AGENT_TAG#v}" > "$BIN_DIR/lynx-agent-version"
+printf '%s' "${LATEST_AGENT_TAG#v}" > "$BIN_DIR/helmly-agent-version"
 log_ok "Version: ${LATEST_AGENT_TAG#v}"
 
 # --- Write agent env file ---------------------------------------------------
@@ -897,11 +897,11 @@ fi
 
 cat > "$AGENT_CONF" << EOF
 AGENT_ID=${AGENT_ID}
-DATABASE_URL_FILE=/run/credentials/lynx-agent.service/database-url
-INTERNAL_TOKEN_FILE=/run/credentials/lynx-agent.service/internal-token
-DASHBOARD_VERIFY_KEY_FILE=/run/credentials/lynx-agent.service/helmly-dashboard-pubkey
-SYNC_TOKEN_FILE=/run/credentials/lynx-agent.service/sync-token
-KEK_FILE=/run/credentials/lynx-agent.service/helmly-kek
+DATABASE_URL_FILE=/run/credentials/helmly-agent.service/database-url
+INTERNAL_TOKEN_FILE=/run/credentials/helmly-agent.service/internal-token
+DASHBOARD_VERIFY_KEY_FILE=/run/credentials/helmly-agent.service/helmly-dashboard-pubkey
+SYNC_TOKEN_FILE=/run/credentials/helmly-agent.service/sync-token
+KEK_FILE=/run/credentials/helmly-agent.service/helmly-kek
 LISTEN_ADDR=127.0.0.1:${AGENT_PORT}
 DASHBOARD_URL=http://${DASHBOARD_WG_IP}:8080
 RUST_LOG=info
@@ -942,7 +942,7 @@ log_section "Installing systemd service"
 # Service that starts the PostgreSQL container at boot.
 # Podman's podman-restart.service only handles restart-policy=always;
 # our container uses unless-stopped, so we manage boot startup explicitly.
-cat > /etc/systemd/system/lynx-agent-postgres.service << 'EOF'
+cat > /etc/systemd/system/helmly-agent-postgres.service << 'EOF'
 [Unit]
 Description=Lynx Agent — PostgreSQL container
 After=network.target
@@ -957,12 +957,12 @@ ExecStop=/usr/bin/podman stop -t 30 lynx-agent-postgres
 WantedBy=multi-user.target
 EOF
 
-cat > /etc/systemd/system/lynx-agent.service << EOF
+cat > /etc/systemd/system/helmly-agent.service << EOF
 [Unit]
 Description=Lynx Agent — infrastructure orchestration service
 Documentation=https://github.com/Glyndor/panel-agent
-After=network.target lynx-agent-postgres.service
-Requires=network.target lynx-agent-postgres.service
+After=network.target helmly-agent-postgres.service
+Requires=network.target helmly-agent-postgres.service
 
 [Service]
 Type=simple
@@ -991,9 +991,9 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable lynx-agent-postgres.service
-systemctl enable lynx-agent.service
-log_ok "Services installed: lynx-agent-postgres.service, lynx-agent.service"
+systemctl enable helmly-agent-postgres.service
+systemctl enable helmly-agent.service
+log_ok "Services installed: helmly-agent-postgres.service, helmly-agent.service"
 
 # --- WireGuard agent side ---------------------------------------------------
 
@@ -1065,7 +1065,7 @@ ${WG_PEER_BLOCK}
 EOF
 
 chmod 600 "$LYNX_WG_CONF"
-chown lynx-agent:lynx-agent "$LYNX_WG_CONF"
+chown "${HELMLY_AGENT_USER}:${HELMLY_AGENT_USER}" "$LYNX_WG_CONF"
 
 # Symlink into /etc/wireguard/ for wg-quick compatibility
 mkdir -p "$WG_DIR"
@@ -1093,7 +1093,7 @@ unset _DASH_WG_CONF
 
 # Persist PSK as a separate credential for systemd LoadCredential tmpfs isolation.
 # The wg.conf already contains it for tunnel setup; this credential lets the agent
-# Rust code read the PSK from /run/credentials/lynx-agent.service/lynx-wg-psk
+# Rust code read the PSK from /run/credentials/helmly-agent.service/lynx-wg-psk
 # without accessing the conf file directly.
 printf '%s' "$PSK" > /etc/glyndor/helmly/credentials/lynx-wg-psk
 chmod 600 /etc/glyndor/helmly/credentials/lynx-wg-psk
@@ -1206,16 +1206,16 @@ systemctl enable nftables 2>/dev/null || true
 
 # --- Start agent service ----------------------------------------------------
 
-log_section "Starting lynx-agent service"
+log_section "Starting helmly-agent service"
 
-systemctl start lynx-agent.service
+systemctl start helmly-agent.service
 sleep 3
 
-if systemctl is-active --quiet lynx-agent.service; then
-    log_ok "lynx-agent is running"
+if systemctl is-active --quiet helmly-agent.service; then
+    log_ok "helmly-agent is running"
 else
-    log_error "lynx-agent failed to start"
-    systemctl status lynx-agent.service --no-pager
+    log_error "helmly-agent failed to start"
+    systemctl status helmly-agent.service --no-pager
     exit 1
 fi
 
