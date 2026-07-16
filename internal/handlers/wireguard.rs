@@ -64,7 +64,7 @@ pub fn handle_wg_rotate_psk(cmd: &VerifiedCommand) -> std::result::Result<Value,
     }
 
     // Persist new PSK to credential file so it survives agent restarts.
-    const PSK_PATH: &str = "/etc/lynx/credentials/lynx-wg-psk";
+    const PSK_PATH: &str = "/etc/glyndor/helmly/credentials/lynx-wg-psk";
     if let Err(e) = std::fs::write(PSK_PATH, new_psk.as_bytes()) {
         tracing::warn!("failed to persist new PSK to {PSK_PATH}: {e}");
     } else {
@@ -79,7 +79,7 @@ pub fn handle_wg_rotate_psk(cmd: &VerifiedCommand) -> std::result::Result<Value,
     // Also update the wg-quick conf so the PSK survives a full reboot.
     // wg-quick reads PresharedKey from the conf at boot; if it diverges from the
     // credential file the tunnel breaks after the next reboot.
-    const WG_CONF_PATH: &str = "/etc/lynx/wireguard/lynx-wg.conf";
+    const WG_CONF_PATH: &str = "/etc/glyndor/helmly/wireguard/lynx-wg.conf";
     match std::fs::read_to_string(WG_CONF_PATH) {
         Ok(conf) => {
             let updated = conf

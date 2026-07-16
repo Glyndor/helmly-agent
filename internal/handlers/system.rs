@@ -304,7 +304,7 @@ pub async fn handle_cert_update(
     let cert_json =
         serde_json::to_string(&cert_entry).map_err(|e| AgentError::Internal(anyhow::anyhow!(e)))?;
 
-    let cert_path = std::path::Path::new("/etc/lynx/cert.json");
+    let cert_path = std::path::Path::new("/etc/glyndor/helmly/cert.json");
     if let Some(parent) = cert_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| AgentError::Internal(anyhow::anyhow!(e)))?;
     }
@@ -312,7 +312,7 @@ pub async fn handle_cert_update(
         .await
         .map_err(|e| AgentError::Internal(anyhow::anyhow!(e)))?;
 
-    tracing::info!(agent_id = %state.config.agent_id, "agent cert renewed and persisted to /etc/lynx/cert.json");
+    tracing::info!(agent_id = %state.config.agent_id, "agent cert renewed and persisted to /etc/glyndor/helmly/cert.json");
 
     Ok(json!({ "ok": true }))
 }
@@ -336,7 +336,7 @@ async fn handle_db_rotate_password(
     // Dollar-quoting ($$...$$) avoids any quote-based injection.
     // new_pass is hex [0-9a-f] so "$$" can never appear inside it.
     sqlx::query(&format!(
-        "ALTER USER lynx_agent_app PASSWORD $${}$$",
+        "ALTER USER helmly_agent_app PASSWORD $${}$$",
         &*new_pass
     ))
     .execute(&state.db)
@@ -362,11 +362,11 @@ async fn handle_db_rotate_password(
         tracing::warn!("failed to update Podman secret lynx-agent-pg-pass — password rotated in DB but secret not updated");
     }
 
-    // Update /etc/lynx/credentials/database-url so systemd LoadCredential
+    // Update /etc/glyndor/helmly/credentials/database-url so systemd LoadCredential
     // serves the new password on next agent restart.
     match update_database_url_credential(&state.config.database_url, &new_pass) {
-        Ok(()) => tracing::info!("updated /etc/lynx/credentials/database-url with new password"),
-        Err(e) => tracing::warn!("failed to update /etc/lynx/credentials/database-url: {e} — credential file still has old password"),
+        Ok(()) => tracing::info!("updated /etc/glyndor/helmly/credentials/database-url with new password"),
+        Err(e) => tracing::warn!("failed to update /etc/glyndor/helmly/credentials/database-url: {e} — credential file still has old password"),
     }
 
     tracing::info!("agent PostgreSQL password rotated");
@@ -380,7 +380,7 @@ fn update_database_url_credential(current_url: &str, new_pass: &str) -> anyhow::
         .set_password(Some(new_pass))
         .map_err(|_| anyhow::anyhow!("failed to set password in database URL"))?;
     let new_url = parsed.to_string();
-    let path = std::path::Path::new("/etc/lynx/credentials/database-url");
+    let path = std::path::Path::new("/etc/glyndor/helmly/credentials/database-url");
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }

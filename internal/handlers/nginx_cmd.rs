@@ -9,7 +9,7 @@ use super::containers::require_str;
 
 const NGINX_CONTAINER: &str = "lynx-nginx";
 const NGINX_CONFIG_PATH: &str = "/etc/nginx/conf.d/lynx.conf";
-const WEBROOT_PATH: &str = "/var/lib/lynx/nginx/webroot";
+const WEBROOT_PATH: &str = "/var/lib/glyndor/helmly/nginx/webroot";
 
 /// Deploy the nginx reverse-proxy container. Idempotent — removes the old container first
 /// if it exists (stopped or otherwise).
@@ -146,7 +146,7 @@ pub fn handle_nginx_install_cert(
     validate_domain_for_path(&domain)?;
     let cert_pem = require_str(&cmd.command, "cert_pem")?;
 
-    let cert_dir = format!("/etc/lynx/nginx/certs/{domain}");
+    let cert_dir = format!("/etc/glyndor/helmly/nginx/certs/{domain}");
     std::fs::create_dir_all(&cert_dir)
         .map_err(|e| AgentError::Internal(anyhow::anyhow!("create cert dir: {e}")))?;
 

@@ -39,7 +39,7 @@ log_section() { echo -e "\n${BOLD}${CYAN}=== $* ===${RESET}"; }
 
 # --- Constants --------------------------------------------------------------
 
-BIN_DIR="/etc/lynx/bin"
+BIN_DIR="/etc/glyndor/helmly/bin"
 BINARY_PATH="$BIN_DIR/lynx-agent"
 GITHUB_REPO="Glyndor/panel-agent"
 VERSION_FILE="$BIN_DIR/lynx-agent-version"

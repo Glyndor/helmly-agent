@@ -41,10 +41,10 @@ log_section() { echo -e "\n${BOLD}${CYAN}=== $* ===${RESET}"; }
 
 # --- Constants --------------------------------------------------------------
 
-LYNX_DIR="/etc/lynx"
-AGENT_CONF="$LYNX_DIR/agent.env"
-LYNX_WG_DIR="$LYNX_DIR/wireguard"
-LYNX_WG_CONF="$LYNX_WG_DIR/lynx-wg.conf"   # source of truth (spec path)
+HELMLY_DIR="/etc/glyndor/helmly"
+AGENT_CONF="$HELMLY_DIR/agent.env"
+HELMLY_WG_DIR="$HELMLY_DIR/wireguard"
+LYNX_WG_CONF="$HELMLY_WG_DIR/lynx-wg.conf"   # source of truth (spec path)
 WG_DIR="/etc/wireguard"
 WG_CONF_LINK="$WG_DIR/wg-lynx-agent.conf"   # symlink for wg-quick compatibility
 WG_IFACE="wg-lynx-agent"
@@ -56,13 +56,13 @@ LYNX_AGENT_USER="lynx-agent"
 PG_NETWORK="lynx-agent-db"
 PG_CONTAINER="lynx-agent-postgres"
 PG_IMAGE="docker.io/percona/percona-distribution-postgresql@sha256:71cce6ed329d4108461eeaa40fb0c1517bee2e0f78051cee40a4b010eed448c3"
-PG_DB="lynx_agent"
+PG_DB="helmly_agent"
 PG_SUBNET="172.20.100.0/24"
 PG_STATIC_IP="172.20.100.2"  # Fixed IP — agent binary (root) connects directly, no host port mapping
 # Agent UUID v7 — generated on first install, persists across updates
 AGENT_ID=""
 
-BIN_DIR="/etc/lynx/bin"
+BIN_DIR="/etc/glyndor/helmly/bin"
 BINARY_PATH="$BIN_DIR/lynx-agent"
 
 # --- Root check -------------------------------------------------------------
@@ -112,22 +112,22 @@ _cleanup_existing() {
     nft delete table inet lynx-agent 2>/dev/null || true
     rm -f /etc/nftables-lynx-agent.conf
 
-    # /etc/lynx is shared with the dashboard on co-located VPSes.
+    # /etc/glyndor/helmly is shared with the dashboard on co-located VPSes.
     # Preserve files that belong to the dashboard so the dashboard containers
     # are not disrupted by an agent reinstall. The agent-specific content is
     # removed explicitly; the shared directory is removed only if empty.
     _SAVED_DASH_SIGN_PUBKEY=""
-    [[ -r "$LYNX_DIR/dashboard-sign-pubkey" ]] && _SAVED_DASH_SIGN_PUBKEY=$(< "$LYNX_DIR/dashboard-sign-pubkey")
+    [[ -r "$HELMLY_DIR/dashboard-sign-pubkey" ]] && _SAVED_DASH_SIGN_PUBKEY=$(< "$HELMLY_DIR/dashboard-sign-pubkey")
 
-    rm -rf "$LYNX_WG_DIR" "$LYNX_DIR/credentials"
-    rm -f  "$AGENT_CONF" "$LYNX_DIR/agent-id"
+    rm -rf "$HELMLY_WG_DIR" "$HELMLY_DIR/credentials"
+    rm -f  "$AGENT_CONF" "$HELMLY_DIR/agent-id"
     rm -f  "$BIN_DIR/lynx-agent" "$BIN_DIR/lynx-agent.prev" "$BIN_DIR/lynx-agent-version"
-    rmdir  "$BIN_DIR" "$LYNX_DIR" 2>/dev/null || true
+    rmdir  "$BIN_DIR" "$HELMLY_DIR" 2>/dev/null || true
 
     if [[ -n "$_SAVED_DASH_SIGN_PUBKEY" ]]; then
-        mkdir -p "$LYNX_DIR"
-        printf '%s' "$_SAVED_DASH_SIGN_PUBKEY" > "$LYNX_DIR/dashboard-sign-pubkey"
-        chmod 644 "$LYNX_DIR/dashboard-sign-pubkey"
+        mkdir -p "$HELMLY_DIR"
+        printf '%s' "$_SAVED_DASH_SIGN_PUBKEY" > "$HELMLY_DIR/dashboard-sign-pubkey"
+        chmod 644 "$HELMLY_DIR/dashboard-sign-pubkey"
     fi
     unset _SAVED_DASH_SIGN_PUBKEY
 
@@ -162,8 +162,8 @@ log_ok "Disk:  ${FREE_DISK_MB} MB free on / (minimum 2048 MB satisfied)"
 log_section "Checking for existing installation"
 
 existing=false
-# Check for agent-specific markers only — /etc/lynx is shared with the dashboard
-# on VPSes that host both. /etc/lynx alone does not mean the agent is installed.
+# Check for agent-specific markers only — /etc/glyndor/helmly is shared with the dashboard
+# on VPSes that host both. /etc/glyndor/helmly alone does not mean the agent is installed.
 if id "$LYNX_AGENT_USER" &>/dev/null || \
    systemctl list-unit-files lynx-agent.service 2>/dev/null | grep -q lynx-agent || \
    [[ -f "$AGENT_CONF" ]] || podman container exists "$PG_CONTAINER" 2>/dev/null; then
@@ -195,8 +195,8 @@ if $existing; then
             fi
             # Preserve agent ID across reinstalls — dashboard still has the old one registered
             _SAVED_AGENT_ID=""
-            if [[ -f "$LYNX_DIR/agent-id" ]]; then
-                _SAVED_AGENT_ID=$(cat "$LYNX_DIR/agent-id")
+            if [[ -f "$HELMLY_DIR/agent-id" ]]; then
+                _SAVED_AGENT_ID=$(cat "$HELMLY_DIR/agent-id")
                 log_info "Preserving Agent ID for reinstall: $_SAVED_AGENT_ID"
             fi
             _cleanup_existing
@@ -236,11 +236,11 @@ echo ""
 # lockdown after the 5-minute heartbeat timeout.
 #
 # Local-agent path: if running on the same host as the dashboard, the install
-# script already wrote it to /etc/lynx/dashboard-sign-pubkey — auto-detect that
+# script already wrote it to /etc/glyndor/helmly/dashboard-sign-pubkey — auto-detect that
 # default to avoid an unnecessary prompt.
 DEFAULT_DASHBOARD_SIGN_PUBKEY=""
-if [[ -r /etc/lynx/dashboard-sign-pubkey ]]; then
-    DEFAULT_DASHBOARD_SIGN_PUBKEY=$(< /etc/lynx/dashboard-sign-pubkey)
+if [[ -r /etc/glyndor/helmly/dashboard-sign-pubkey ]]; then
+    DEFAULT_DASHBOARD_SIGN_PUBKEY=$(< /etc/glyndor/helmly/dashboard-sign-pubkey)
 fi
 if [[ -n "$DEFAULT_DASHBOARD_SIGN_PUBKEY" ]]; then
     read -rp "  Dashboard signing public key (Ed25519, base64) [default: detected]: " DASHBOARD_SIGN_PUBKEY
@@ -569,9 +569,9 @@ unset _ntp_active
 
 log_section "Creating directories"
 
-mkdir -p "$LYNX_DIR"
-chmod 755 "$LYNX_DIR"
-log_ok "$LYNX_DIR"
+mkdir -p "$HELMLY_DIR"
+chmod 755 "$HELMLY_DIR"
+log_ok "$HELMLY_DIR"
 
 # --- Download core agent binary ---------------------------------------------
 #
@@ -696,8 +696,8 @@ else
     AGENT_ID=$("$BINARY_PATH" gen-uuid-v7)
 fi
 # Always persist so successive reinstalls preserve the ID
-printf '%s' "$AGENT_ID" > "$LYNX_DIR/agent-id"
-chmod 600 "$LYNX_DIR/agent-id"
+printf '%s' "$AGENT_ID" > "$HELMLY_DIR/agent-id"
+chmod 600 "$HELMLY_DIR/agent-id"
 log_ok "Agent ID: $AGENT_ID"
 
 # --- Create system user -----------------------------------------------------
@@ -748,8 +748,8 @@ log_info "PostgreSQL root password..."
 )
 
 log_info "PostgreSQL app password..."
-mkdir -p /etc/lynx/credentials
-chmod 700 /etc/lynx/credentials
+mkdir -p /etc/glyndor/helmly/credentials
+chmod 700 /etc/glyndor/helmly/credentials
 # PG_PASS stays in outer shell until DATABASE_URL can be written (needs container IP).
 # Zeroized after writing the credential file.
 PG_PASS=$("$BINARY_PATH" gen-rand 32)
@@ -760,12 +760,12 @@ INTERNAL_TOKEN=$("$BINARY_PATH" gen-rand 32)
 printf '%s' "$INTERNAL_TOKEN" | podman secret create lynx-agent-internal-token - >/dev/null
 
 log_info "KEK (Key Encryption Key)..."
-mkdir -p /etc/lynx/credentials
-chmod 700 /etc/lynx/credentials
+mkdir -p /etc/glyndor/helmly/credentials
+chmod 700 /etc/glyndor/helmly/credentials
 (
     KEK=$("$BINARY_PATH" gen-rand 32)
-    printf '%s' "$KEK" > /etc/lynx/credentials/lynx-kek
-    chmod 600 /etc/lynx/credentials/lynx-kek
+    printf '%s' "$KEK" > /etc/glyndor/helmly/credentials/helmly-kek
+    chmod 600 /etc/glyndor/helmly/credentials/helmly-kek
     KEK="$("$BINARY_PATH" gen-rand 32)"
 )
 
@@ -774,10 +774,10 @@ log_ok "Agent secrets generated"
 log_info "Creating pg_tde keyring directory..."
 # pg_tde manages its own keyring file — we just provide the directory.
 # Owned by UID 26 (postgres user inside the Percona container) for rootful Podman.
-mkdir -p /etc/lynx/pg-keyring
-chown 26:26 /etc/lynx/pg-keyring
-chmod 700 /etc/lynx/pg-keyring
-log_ok "pg_tde keyring dir: /etc/lynx/pg-keyring"
+mkdir -p /etc/glyndor/helmly/pg-keyring
+chown 26:26 /etc/glyndor/helmly/pg-keyring
+chmod 700 /etc/glyndor/helmly/pg-keyring
+log_ok "pg_tde keyring dir: /etc/glyndor/helmly/pg-keyring"
 
 # --- Podman network for agent DB -------------------------------------------
 
@@ -794,29 +794,29 @@ fi
 
 log_section "Preparing PostgreSQL init script"
 
-PG_INIT_DIR="$LYNX_DIR/pg-init"
+PG_INIT_DIR="$HELMLY_DIR/pg-init"
 mkdir -p "$PG_INIT_DIR"
 
 cat > "$PG_INIT_DIR/01-init.sql" << 'PGSQL'
 \set app_pass `cat /run/secrets/lynx-agent-pg-pass`
 
-CREATE USER lynx_agent_app WITH PASSWORD :'app_pass' NOSUPERUSER NOCREATEDB NOCREATEROLE;
-GRANT CONNECT ON DATABASE lynx_agent TO lynx_agent_app;
-\connect lynx_agent
-GRANT USAGE, CREATE ON SCHEMA public TO lynx_agent_app;
+CREATE USER helmly_agent_app WITH PASSWORD :'app_pass' NOSUPERUSER NOCREATEDB NOCREATEROLE;
+GRANT CONNECT ON DATABASE helmly_agent TO helmly_agent_app;
+\connect helmly_agent
+GRANT USAGE, CREATE ON SCHEMA public TO helmly_agent_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
-    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO lynx_agent_app;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO helmly_agent_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
-    GRANT USAGE, SELECT ON SEQUENCES TO lynx_agent_app;
+    GRANT USAGE, SELECT ON SEQUENCES TO helmly_agent_app;
 
 -- Enable transparent storage encryption via pg_tde (AES-256).
--- The keyring file is created and managed by pg_tde at /var/pg-keyring/lynx.keyring.
--- All future tables in lynx_agent will be transparently encrypted (tde_heap).
+-- The keyring file is created and managed by pg_tde at /var/pg-keyring/helmly.keyring.
+-- All future tables in helmly_agent will be transparently encrypted (tde_heap).
 CREATE EXTENSION IF NOT EXISTS pg_tde;
-SELECT pg_tde_add_database_key_provider_file('lynx-keyring', '/var/pg-keyring/lynx.keyring');
-SELECT pg_tde_create_key_using_database_key_provider('lynx-agent-key', 'lynx-keyring');
-SELECT pg_tde_set_key_using_database_key_provider('lynx-agent-key', 'lynx-keyring');
-ALTER DATABASE lynx_agent SET default_table_access_method = tde_heap;
+SELECT pg_tde_add_database_key_provider_file('helmly-keyring', '/var/pg-keyring/helmly.keyring');
+SELECT pg_tde_create_key_using_database_key_provider('helmly-agent-key', 'helmly-keyring');
+SELECT pg_tde_set_key_using_database_key_provider('helmly-agent-key', 'helmly-keyring');
+ALTER DATABASE helmly_agent SET default_table_access_method = tde_heap;
 PGSQL
 
 chmod 644 "$PG_INIT_DIR/01-init.sql"
@@ -847,7 +847,7 @@ podman run -d \
     -e 'POSTGRES_INITDB_ARGS=-c shared_preload_libraries=pg_tde' \
     -v lynx-agent-pg-data:/data/db \
     -v "$PG_INIT_DIR:/docker-entrypoint-initdb.d:ro" \
-    -v /etc/lynx/pg-keyring:/var/pg-keyring \
+    -v /etc/glyndor/helmly/pg-keyring:/var/pg-keyring \
     --restart unless-stopped \
     "$PG_IMAGE"
 
@@ -869,9 +869,9 @@ done
 # The agent binary runs as root and can reach the container network directly — no host
 # port mapping needed (which would create iptables DNAT rules that survive reinstalls).
 (
-    DB_URL="postgresql://lynx_agent_app:${PG_PASS}@${PG_STATIC_IP}:5432/${PG_DB}"
-    printf '%s' "$DB_URL" > /etc/lynx/credentials/database-url
-    chmod 600 /etc/lynx/credentials/database-url
+    DB_URL="postgresql://helmly_agent_app:${PG_PASS}@${PG_STATIC_IP}:5432/${PG_DB}"
+    printf '%s' "$DB_URL" > /etc/glyndor/helmly/credentials/database-url
+    chmod 600 /etc/glyndor/helmly/credentials/database-url
     DB_URL="$("$BINARY_PATH" gen-rand 32)"
 )
 PG_PASS="$("$BINARY_PATH" gen-rand 32)"
@@ -889,7 +889,7 @@ log_section "Writing agent configuration"
 # Detect if this is the dashboard VPS — setup-dashboard.sh leaves nginx config
 IS_DASHBOARD_VPS=false
 DASHBOARD_PORT_CONF=""
-if [[ -f /etc/lynx/nginx/default.conf ]]; then
+if [[ -f /etc/glyndor/helmly/nginx/default.conf ]]; then
     IS_DASHBOARD_VPS=true
     DASHBOARD_PORT_CONF="DASHBOARD_PORT=19443"
     log_info "Dashboard VPS detected — local agent mode, will open port 19443"
@@ -899,9 +899,9 @@ cat > "$AGENT_CONF" << EOF
 AGENT_ID=${AGENT_ID}
 DATABASE_URL_FILE=/run/credentials/lynx-agent.service/database-url
 INTERNAL_TOKEN_FILE=/run/credentials/lynx-agent.service/internal-token
-DASHBOARD_VERIFY_KEY_FILE=/run/credentials/lynx-agent.service/lynx-dashboard-pubkey
+DASHBOARD_VERIFY_KEY_FILE=/run/credentials/lynx-agent.service/helmly-dashboard-pubkey
 SYNC_TOKEN_FILE=/run/credentials/lynx-agent.service/sync-token
-KEK_FILE=/run/credentials/lynx-agent.service/lynx-kek
+KEK_FILE=/run/credentials/lynx-agent.service/helmly-kek
 LISTEN_ADDR=127.0.0.1:${AGENT_PORT}
 DASHBOARD_URL=http://${DASHBOARD_WG_IP}:8080
 RUST_LOG=info
@@ -913,8 +913,8 @@ log_ok "Config: $AGENT_CONF"
 
 # Write INTERNAL_TOKEN to systemd credential file (source on disk, 600 root-only;
 # systemd LoadCredential exposes it at /run/credentials/... tmpfs at service start)
-printf '%s' "$INTERNAL_TOKEN" > /etc/lynx/credentials/internal-token
-chmod 600 /etc/lynx/credentials/internal-token
+printf '%s' "$INTERNAL_TOKEN" > /etc/glyndor/helmly/credentials/internal-token
+chmod 600 /etc/glyndor/helmly/credentials/internal-token
 
 # Clear INTERNAL_TOKEN from memory
 INTERNAL_TOKEN="$("$BINARY_PATH" gen-rand 32)"
@@ -924,14 +924,14 @@ unset INTERNAL_TOKEN
 # command from the dashboard (heartbeat ACK, container ops, nftables push,
 # update.self, ...) is verified against this key.  Without it, the agent
 # rejects every command and enters lockdown after 5 minutes.
-printf '%s' "$DASHBOARD_SIGN_PUBKEY" > /etc/lynx/credentials/lynx-dashboard-pubkey
-chmod 600 /etc/lynx/credentials/lynx-dashboard-pubkey
+printf '%s' "$DASHBOARD_SIGN_PUBKEY" > /etc/glyndor/helmly/credentials/helmly-dashboard-pubkey
+chmod 600 /etc/glyndor/helmly/credentials/helmly-dashboard-pubkey
 unset DASHBOARD_SIGN_PUBKEY
 
 # Persist the sync token — used to authenticate the agent→dashboard WebSocket
 # connection and audit log sync.  Shown once when registering the VPS.
-printf '%s' "$SYNC_TOKEN" > /etc/lynx/credentials/sync-token
-chmod 600 /etc/lynx/credentials/sync-token
+printf '%s' "$SYNC_TOKEN" > /etc/glyndor/helmly/credentials/sync-token
+chmod 600 /etc/glyndor/helmly/credentials/sync-token
 SYNC_TOKEN="$("$BINARY_PATH" gen-rand 32)"
 unset SYNC_TOKEN
 
@@ -975,12 +975,12 @@ RestartSec=5s
 TimeoutStopSec=30s
 
 # Systemd credentials (tmpfs — never touches disk)
-LoadCredential=database-url:/etc/lynx/credentials/database-url
-LoadCredential=internal-token:/etc/lynx/credentials/internal-token
-LoadCredential=lynx-dashboard-pubkey:/etc/lynx/credentials/lynx-dashboard-pubkey
-LoadCredential=sync-token:/etc/lynx/credentials/sync-token
-LoadCredential=lynx-wg-psk:-/etc/lynx/credentials/lynx-wg-psk
-LoadCredential=lynx-kek:/etc/lynx/credentials/lynx-kek
+LoadCredential=database-url:/etc/glyndor/helmly/credentials/database-url
+LoadCredential=internal-token:/etc/glyndor/helmly/credentials/internal-token
+LoadCredential=helmly-dashboard-pubkey:/etc/glyndor/helmly/credentials/helmly-dashboard-pubkey
+LoadCredential=sync-token:/etc/glyndor/helmly/credentials/sync-token
+LoadCredential=lynx-wg-psk:-/etc/glyndor/helmly/credentials/lynx-wg-psk
+LoadCredential=helmly-kek:/etc/glyndor/helmly/credentials/helmly-kek
 
 # Minimal hardening — agent is a privileged system daemon (package management,
 # nftables, system user creation, binary self-update all require root).
@@ -1055,7 +1055,7 @@ if [[ -n "$KEEPALIVE_LINE" ]]; then
 ${KEEPALIVE_LINE}"
 fi
 
-mkdir -p "$LYNX_WG_DIR"
+mkdir -p "$HELMLY_WG_DIR"
 cat > "$LYNX_WG_CONF" << EOF
 [Interface]
 PrivateKey = ${AGENT_PRIV}
@@ -1095,8 +1095,8 @@ unset _DASH_WG_CONF
 # The wg.conf already contains it for tunnel setup; this credential lets the agent
 # Rust code read the PSK from /run/credentials/lynx-agent.service/lynx-wg-psk
 # without accessing the conf file directly.
-printf '%s' "$PSK" > /etc/lynx/credentials/lynx-wg-psk
-chmod 600 /etc/lynx/credentials/lynx-wg-psk
+printf '%s' "$PSK" > /etc/glyndor/helmly/credentials/lynx-wg-psk
+chmod 600 /etc/glyndor/helmly/credentials/lynx-wg-psk
 
 AGENT_PRIV="$("$BINARY_PATH" gen-rand 32)"  # overwrite
 PSK="$("$BINARY_PATH" gen-rand 32)"

@@ -4,8 +4,8 @@ use anyhow::{Context, Result};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use std::path::PathBuf;
 
-const AGENT_BINARY: &str = "/etc/lynx/bin/lynx-agent";
-const CRITICAL_FILE: &str = "/etc/lynx/CRITICAL";
+const AGENT_BINARY: &str = "/etc/glyndor/helmly/bin/lynx-agent";
+const CRITICAL_FILE: &str = "/etc/glyndor/helmly/CRITICAL";
 
 /// Download new binary, verify Ed25519 signature, backup to .prev, atomic swap, restart via systemd.
 ///
@@ -78,8 +78,8 @@ pub async fn perform_update(version: &str, download_url: &str, sig_url: &str) ->
 ///
 /// Polls `http://127.0.0.1:9090/health` every 2s for 30s.
 /// If still unhealthy → attempt `.prev` restore and exit 1 (systemd restarts with old binary).
-/// If `.prev` unavailable or restore fails → write `/etc/lynx/CRITICAL` and exit 1.
-/// On healthy startup → delete `/etc/lynx/CRITICAL` if present (recovery from prior critical state).
+/// If `.prev` unavailable or restore fails → write `/etc/glyndor/helmly/CRITICAL` and exit 1.
+/// On healthy startup → delete `/etc/glyndor/helmly/CRITICAL` if present (recovery from prior critical state).
 pub fn spawn_startup_health_guard() {
     tokio::spawn(async move {
         let client = match reqwest::Client::builder()
