@@ -5,7 +5,7 @@ edition = "2021"
 
 [[bin]]
 name = "lynx-agent"
-path = "src/main.rs"
+path = "internal/main.rs"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
