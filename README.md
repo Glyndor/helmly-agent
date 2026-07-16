@@ -1,6 +1,6 @@
 # panel-agent
 
-`lynx-agent` — hardened server-side daemon for the [Lynx panel](https://github.com/Glyndor/panel).
+`helmly-agent` — hardened server-side daemon for the [Helmly panel](https://github.com/Glyndor/helmly).
 
 It runs on each managed VPS and executes commands sent by the dashboard:
 containers (rootless Podman), firewall (nftables), tunnels (WireGuard) and
