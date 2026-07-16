@@ -31,13 +31,13 @@ pub struct AppState {
     pub nft_chain_checksums: Arc<Mutex<[Option<String>; 3]>>,
     /// Rendered nft ruleset from last successful apply() — used for restore.
     pub nft_last_ruleset: Arc<Mutex<Option<String>>>,
-    /// Body of the lynx-global chain (input, managed by dashboard global rules).
+    /// Body of the helmly-global chain (input, managed by dashboard global rules).
     pub nft_global_body: Arc<Mutex<String>>,
-    /// Body of the lynx-local chain (input, managed by dashboard local rules for this agent).
+    /// Body of the helmly-local chain (input, managed by dashboard local rules for this agent).
     pub nft_local_body: Arc<Mutex<String>>,
-    /// Body of the lynx-global-output chain (output, managed by dashboard global rules).
+    /// Body of the helmly-global-output chain (output, managed by dashboard global rules).
     pub nft_global_output_body: Arc<Mutex<String>>,
-    /// Body of the lynx-local-output chain (output, managed by dashboard local rules for this agent).
+    /// Body of the helmly-local-output chain (output, managed by dashboard local rules for this agent).
     pub nft_local_output_body: Arc<Mutex<String>>,
     /// WireGuard port used in the last full nftables apply (stored for chain-only updates).
     pub nft_wg_port: Arc<std::sync::atomic::AtomicU32>,

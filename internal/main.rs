@@ -227,10 +227,10 @@ async fn main() -> anyhow::Result<()> {
 
             for row in &rows {
                 match row.chain.as_str() {
-                    "lynx-global" => global_body = row.body.clone(),
-                    "lynx-local" => local_body = row.body.clone(),
-                    "lynx-global-output" => global_output_body = row.body.clone(),
-                    "lynx-local-output" => local_output_body = row.body.clone(),
+                    "helmly-global" => global_body = row.body.clone(),
+                    "helmly-local" => local_body = row.body.clone(),
+                    "helmly-global-output" => global_output_body = row.body.clone(),
+                    "helmly-local-output" => local_output_body = row.body.clone(),
                     _ => {}
                 }
                 wg_port = row.wg_port as u16;
@@ -261,9 +261,9 @@ async fn main() -> anyhow::Result<()> {
                         state.set_nft_checksum(checksum);
                     }
                     state.set_nft_chain_checksums(
-                        nftables::chain_checksum("lynx-base").ok(),
-                        nftables::chain_checksum("lynx-global").ok(),
-                        nftables::chain_checksum("lynx-local").ok(),
+                        nftables::chain_checksum("helmly-base").ok(),
+                        nftables::chain_checksum("helmly-global").ok(),
+                        nftables::chain_checksum("helmly-local").ok(),
                     );
                     state.set_nft_last_ruleset(rendered);
                     tracing::info!("nftables ruleset re-applied from DB on startup");

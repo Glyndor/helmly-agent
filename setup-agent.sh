@@ -109,8 +109,8 @@ _cleanup_existing() {
     userdel -r "$HELMLY_AGENT_USER" 2>/dev/null || true
 
     # Remove nftables table
-    nft delete table inet lynx-agent 2>/dev/null || true
-    rm -f /etc/nftables-lynx-agent.conf
+    nft delete table inet helmly-agent 2>/dev/null || true
+    rm -f /etc/nftables-helmly-agent.conf
 
     # /etc/glyndor/helmly is shared with the dashboard on co-located VPSes.
     # Preserve files that belong to the dashboard so the dashboard containers
@@ -266,7 +266,7 @@ log_info "Lynx uses Podman for containers and nftables for firewall."
 log_info "The following software is incompatible and will be removed if found:"
 log_info "  Docker, containerd (standalone), firewalld, ufw, iptables (legacy)"
 log_info "Reason: these programs add their own firewall/network rules outside"
-log_info "        table inet lynx-agent, silently exposing ports Lynx considers closed."
+log_info "        table inet helmly-agent, silently exposing ports Lynx considers closed."
 
 _detect_distro() {
     if command -v apt-get &>/dev/null;   then echo "debian"
@@ -311,7 +311,7 @@ _check_remove() {
 
 _REASON_DOCKER="manages own container network and firewall, bypasses helmly-agent nftables"
 _REASON_CTR="manages own container network, conflicts with Podman network isolation"
-_REASON_FW="manages own firewall rules outside table inet lynx-agent"
+_REASON_FW="manages own firewall rules outside table inet helmly-agent"
 
 for pkg in docker-ce docker-ce-cli docker.io docker-compose-plugin moby-engine; do
     _check_remove "$pkg" "$_REASON_DOCKER"
@@ -333,7 +333,7 @@ _check_remove ufw       "$_REASON_FW"
 if $_incompatible_found; then
     # Delete all nftables tables created by Docker / ufw / iptables-nft.
     # On Ubuntu 24.04+, iptables is iptables-nft — its tables live in nftables
-    # ip/ip6 families. Delete them all so only table inet lynx-agent remains.
+    # ip/ip6 families. Delete them all so only table inet helmly-agent remains.
     for _nft_table in \
         "ip filter" "ip nat" "ip mangle" "ip raw" "ip security" \
         "ip6 filter" "ip6 nat" "ip6 mangle" "ip6 raw" "ip6 security" \
@@ -1137,14 +1137,14 @@ if [[ "$IS_DASHBOARD_VPS" == "true" ]]; then
         iifname \"wg-lynx-dash\" accept"
 fi
 
-# Bootstrap ruleset — uses same chain names as the Rust agent (lynx-base, lynx-forward, lynx-output).
+# Bootstrap ruleset — uses same chain names as the Rust agent (helmly-base, helmly-forward, helmly-output).
 # The agent binary will flush and replace this on startup via render_ruleset().
 # The flush prefix ensures no orphaned chains from previous installs survive.
-cat > /etc/nftables-lynx-agent.conf << EOF
-destroy table inet lynx-agent
-add table inet lynx-agent
-table inet lynx-agent {
-    chain lynx-base {
+cat > /etc/nftables-helmly-agent.conf << EOF
+destroy table inet helmly-agent
+add table inet helmly-agent
+table inet helmly-agent {
+    chain helmly-base {
         type filter hook input priority 0; policy drop;
 
         # Loopback
@@ -1171,10 +1171,10 @@ ${DASHBOARD_DNS_NFT}
         drop
     }
 
-    chain lynx-global {}
-    chain lynx-local {}
+    chain helmly-global {}
+    chain helmly-local {}
 
-    chain lynx-forward {
+    chain helmly-forward {
         type filter hook forward priority 0; policy drop;
 
         ct state established,related accept
@@ -1188,18 +1188,18 @@ ${DASHBOARD_DNS_NFT}
 ${DASHBOARD_FORWARD_WG_NFT}
     }
 
-    chain lynx-output {
+    chain helmly-output {
         type filter hook output priority 0; policy accept;
     }
 }
 EOF
 
-nft -f /etc/nftables-lynx-agent.conf
+nft -f /etc/nftables-helmly-agent.conf
 log_ok "nftables rules applied"
 
 if [[ -f /etc/nftables.conf ]]; then
-    if ! grep -q "lynx-agent" /etc/nftables.conf; then
-        echo 'include "/etc/nftables-lynx-agent.conf"' >> /etc/nftables.conf
+    if ! grep -q "helmly-agent" /etc/nftables.conf; then
+        echo 'include "/etc/nftables-helmly-agent.conf"' >> /etc/nftables.conf
     fi
 fi
 systemctl enable nftables 2>/dev/null || true
