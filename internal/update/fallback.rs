@@ -9,7 +9,7 @@ const ABSENT_THRESHOLD_SECS: u64 = 6 * 3600;
 /// How often the fallback updater checks if an update is needed.
 const CHECK_INTERVAL_SECS: u64 = 3600;
 
-const GITHUB_API: &str = "https://api.github.com/repos/Glyndor/panel-agent/releases";
+const GITHUB_API: &str = "https://api.github.com/repos/Glyndor/helmly-agent/releases";
 
 pub async fn run_fallback_updater(state: AppState) {
     let mut ticker = interval(Duration::from_secs(CHECK_INTERVAL_SECS));
@@ -73,7 +73,7 @@ async fn check_and_apply(state: &AppState) -> anyhow::Result<()> {
     );
 
     let download_url = format!(
-        "https://github.com/Glyndor/panel-agent/releases/download/v{latest}/lynx-agent-linux-{arch}"
+        "https://github.com/Glyndor/helmly-agent/releases/download/v{latest}/helmly-agent-linux-{arch}"
     );
     let sig_url = format!("{download_url}.sig");
 

@@ -41,7 +41,7 @@ log_section() { echo -e "\n${BOLD}${CYAN}=== $* ===${RESET}"; }
 
 BIN_DIR="/etc/glyndor/helmly/bin"
 BINARY_PATH="$BIN_DIR/helmly-agent"
-GITHUB_REPO="Glyndor/panel-agent"
+GITHUB_REPO="Glyndor/helmly-agent"
 VERSION_FILE="$BIN_DIR/helmly-agent-version"
 FORCE=false
 
@@ -165,10 +165,10 @@ log_section "Downloading agent binary"
 AGENT_TMP="${BIN_DIR}/helmly-agent.new"
 
 curl -fsSL --max-time 300 \
-    "${RELEASE_BASE}/lynx-agent-linux-${ARCH}" \
+    "${RELEASE_BASE}/helmly-agent-linux-${ARCH}" \
     -o "$AGENT_TMP"
 curl -fsSL --max-time 30 \
-    "${RELEASE_BASE}/lynx-agent-linux-${ARCH}.sig" \
+    "${RELEASE_BASE}/helmly-agent-linux-${ARCH}.sig" \
     -o "${AGENT_TMP}.sig"
 
 log_info "Verifying agent signature..."

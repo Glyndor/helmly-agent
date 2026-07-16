@@ -231,7 +231,7 @@ async fn build_ssrf_safe_client(url: &str) -> Result<reqwest::Client> {
     }
 
     reqwest::Client::builder()
-        .user_agent(format!("lynx-agent/{}", env!("CARGO_PKG_VERSION")))
+        .user_agent(format!("helmly-agent/{}", env!("CARGO_PKG_VERSION")))
         .timeout(std::time::Duration::from_secs(300))
         .resolve(&host, addrs[0])
         .build()

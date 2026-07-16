@@ -581,7 +581,7 @@ log_ok "$HELMLY_DIR"
 
 log_section "Downloading helmly-agent binary"
 
-GITHUB_REPO="Glyndor/panel-agent"
+GITHUB_REPO="Glyndor/helmly-agent"
 RELEASE_VERIFY_KEY_B64="APh+kh61dJeT0HzG+KQXELzDjK4ccvqY9K+FptOZ3+Y="
 
 _ARCH=$(uname -m)
@@ -662,10 +662,10 @@ AGENT_TMP="${BIN_DIR}/helmly-agent.new"
 
 log_info "Downloading agent binary..."
 curl -fsSL --max-time 300 \
-    "${RELEASE_BASE}/lynx-agent-linux-${ARCH}" \
+    "${RELEASE_BASE}/helmly-agent-linux-${ARCH}" \
     -o "$AGENT_TMP"
 curl -fsSL --max-time 30 \
-    "${RELEASE_BASE}/lynx-agent-linux-${ARCH}.sig" \
+    "${RELEASE_BASE}/helmly-agent-linux-${ARCH}.sig" \
     -o "${AGENT_TMP}.sig"
 
 log_info "Verifying agent signature..."
@@ -960,7 +960,7 @@ EOF
 cat > /etc/systemd/system/helmly-agent.service << EOF
 [Unit]
 Description=Lynx Agent — infrastructure orchestration service
-Documentation=https://github.com/Glyndor/panel-agent
+Documentation=https://github.com/Glyndor/helmly-agent
 After=network.target helmly-agent-postgres.service
 Requires=network.target helmly-agent-postgres.service
 
