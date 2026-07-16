@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # -----------------------------------------------------------------------------
-# setup-agent.sh — Lynx Agent install script
+# setup-agent.sh — Helmly Agent install script
 #
 # Description:
-#   Installs the Lynx Agent on a VPS. Sets up:
+#   Installs the Helmly Agent on a VPS. Sets up:
 #     - System user: helmly-agent (privileged, not a login shell)
 #     - subuid/subgid ranges for rootless Podman tenant isolation
 #     - PostgreSQL container (via podman run, helmly-agent-db network)
 #     - helmly-agent binary as a systemd service with required capabilities
-#     - WireGuard tunnel to the Lynx Dashboard
+#     - WireGuard tunnel to the Helmly Dashboard
 #     - nftables: allows only WireGuard inbound, blocks everything else
 #
 # Usage:
@@ -151,7 +151,7 @@ log_section "Checking system resources"
 TOTAL_RAM_MB=$(free -m | awk '/^Mem:/{print $2}')
 if [[ "$TOTAL_RAM_MB" -lt 512 ]]; then
     log_error "Insufficient RAM: ${TOTAL_RAM_MB} MB detected, minimum 512 MB required"
-    log_info  "Lynx Agent requires at least 512 MB RAM for the local PostgreSQL container"
+    log_info  "Helmly Agent requires at least 512 MB RAM for the local PostgreSQL container"
     exit 1
 fi
 log_ok "RAM: ${TOTAL_RAM_MB} MB (minimum 512 MB satisfied)"
@@ -272,11 +272,11 @@ AGENT_WG_IP="$AGENT_WG_IP_INPUT"
 
 log_section "Checking for incompatible software"
 
-log_info "Lynx uses Podman for containers and nftables for firewall."
+log_info "Helmly uses Podman for containers and nftables for firewall."
 log_info "The following software is incompatible and will be removed if found:"
 log_info "  Docker, containerd (standalone), firewalld, ufw, iptables (legacy)"
 log_info "Reason: these programs add their own firewall/network rules outside"
-log_info "        table inet helmly-agent, silently exposing ports Lynx considers closed."
+log_info "        table inet helmly-agent, silently exposing ports Helmly considers closed."
 
 _detect_distro() {
     if command -v apt-get &>/dev/null;   then echo "debian"
@@ -460,7 +460,7 @@ for _pkg in netavark aardvark-dns; do
 done
 
 # Netavark 1.10+ supports a native nftables firewall driver — older versions
-# require iptables-nft. Lynx upgrades from upstream so the iptables package can
+# require iptables-nft. Helmly upgrades from upstream so the iptables package can
 # be dropped entirely (it remains on the incompatible-software list).
 NETAVARK_REQUIRED="1.10.0"
 _netavark_bin=""
@@ -719,7 +719,7 @@ if ! id "$HELMLY_AGENT_USER" &>/dev/null; then
         --system \
         --no-create-home \
         --shell /usr/sbin/nologin \
-        --comment "Lynx Agent service user" \
+        --comment "Helmly Agent service user" \
         "$HELMLY_AGENT_USER"
     log_ok "User created: $HELMLY_AGENT_USER"
 else
@@ -954,7 +954,7 @@ log_section "Installing systemd service"
 # our container uses unless-stopped, so we manage boot startup explicitly.
 cat > /etc/systemd/system/helmly-agent-postgres.service << 'EOF'
 [Unit]
-Description=Lynx Agent — PostgreSQL container
+Description=Helmly Agent — PostgreSQL container
 After=network.target
 
 [Service]
@@ -969,7 +969,7 @@ EOF
 
 cat > /etc/systemd/system/helmly-agent.service << EOF
 [Unit]
-Description=Lynx Agent — infrastructure orchestration service
+Description=Helmly Agent — infrastructure orchestration service
 Documentation=https://github.com/Glyndor/helmly-agent
 After=network.target helmly-agent-postgres.service
 Requires=network.target helmly-agent-postgres.service
@@ -1234,17 +1234,17 @@ fi
 log_section "Agent installation complete"
 
 echo ""
-echo -e "${GREEN}${BOLD}Lynx Agent is running!${RESET}"
+echo -e "${GREEN}${BOLD}Helmly Agent is running!${RESET}"
 echo ""
 echo -e "${BOLD}${YELLOW}=== Add this agent to your dashboard ===${RESET}"
 echo -e "  ${BOLD}Agent ID:${RESET}      ${AGENT_ID}"
 echo -e "  ${BOLD}Agent pubkey:${RESET}  ${AGENT_PUB}"
 echo -e "  ${BOLD}Agent WG IP:${RESET}   ${AGENT_WG_IP}"
 echo ""
-echo -e "  In the Lynx Dashboard → Agents → Add Agent → paste the pubkey above."
+echo -e "  In the Helmly Dashboard → Agents → Add Agent → paste the pubkey above."
 echo -e "  The dashboard will add this agent as a WireGuard peer to complete the tunnel."
 echo ""
 echo -e "${YELLOW}Note:${RESET} The agent API is only reachable via WireGuard (${DASHBOARD_WG_IP} → ${AGENT_WG_IP}:${AGENT_PORT})."
 echo ""
-echo -e "  ${BOLD}Made with love by Jaroc${RESET} — https://github.com/Glyndor/panel"
+echo -e "  ${BOLD}Made with love by Jaroc${RESET} — https://github.com/Glyndor/helmly"
 echo ""

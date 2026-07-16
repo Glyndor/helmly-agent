@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # -----------------------------------------------------------------------------
-# update-agent.sh — Lynx Agent update script
+# update-agent.sh — Helmly Agent update script
 #
 # Description:
-#   Updates the Lynx Agent to the latest available release.
+#   Updates the Helmly Agent to the latest available release.
 #   Downloads the binary from GitHub Releases, verifies Ed25519 signature,
 #   swaps atomically with .prev backup, and restarts the systemd service.
 #   Preserves all data, secrets, WireGuard config, and nftables rules.
@@ -13,7 +13,7 @@
 #   sudo ./update-agent.sh --force   (update even if already at latest)
 #
 # Requirements:
-#   - Lynx Agent already installed (run setup-agent.sh first)
+#   - Helmly Agent already installed (run setup-agent.sh first)
 #   - Run as root
 #   - Internet access to GitHub Releases
 # -----------------------------------------------------------------------------
@@ -64,7 +64,7 @@ fi
 # --- Installation check -----------------------------------------------------
 
 if [[ ! -f "$BINARY_PATH" ]]; then
-    log_error "Lynx Agent not installed — run setup-agent.sh first"
+    log_error "Helmly Agent not installed — run setup-agent.sh first"
     exit 1
 fi
 
@@ -227,7 +227,7 @@ printf '%s' "$LATEST_VERSION" > "$VERSION_FILE"
 log_section "Update complete"
 
 echo ""
-echo -e "${GREEN}${BOLD}Lynx Agent updated to v${LATEST_VERSION}${RESET}"
+echo -e "${GREEN}${BOLD}Helmly Agent updated to v${LATEST_VERSION}${RESET}"
 if [[ -n "$CURRENT_VERSION" ]]; then
     echo -e "  ${BOLD}Previous version:${RESET} $CURRENT_VERSION"
 fi
@@ -241,5 +241,5 @@ echo ""
 echo -e "  If something fails:"
 echo -e "    ${BOLD}helmly-agent logs --errors${RESET}"
 echo ""
-echo -e "  ${BOLD}Made with love by Jaroc${RESET} — https://github.com/Glyndor/panel"
+echo -e "  ${BOLD}Made with love by Jaroc${RESET} — https://github.com/Glyndor/helmly"
 echo ""

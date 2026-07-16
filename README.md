@@ -1,4 +1,4 @@
-# panel-agent
+# helmly-agent
 
 `helmly-agent` — hardened server-side daemon for the [Helmly panel](https://github.com/Glyndor/helmly).
 
@@ -28,8 +28,8 @@ dependency.
 
 ## Install
 
-The agent is installed and updated by the panel installer — see
-[Glyndor/panel](https://github.com/Glyndor/panel). `setup-agent.sh` and
+The agent is installed and updated by the Helmly installer — see
+[Glyndor/helmly](https://github.com/Glyndor/helmly). `setup-agent.sh` and
 `update-agent.sh` in this repository are invoked by that flow.
 
 ## Contributing & security

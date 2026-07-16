@@ -39,7 +39,7 @@ async fn check_once(state: &AppState) {
         error!(
             expected = %&expected[..16],
             current  = %&current[..16],
-            "CRITICAL: helmly-base chain modified outside Lynx — auto-restoring"
+            "CRITICAL: helmly-base chain modified outside Helmly — auto-restoring"
         );
     } else {
         warn!(
