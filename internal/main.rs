@@ -125,7 +125,7 @@ async fn serve_tls(
 const HEARTBEAT_TIMEOUT_SECS: u64 = 300;
 
 #[derive(Parser)]
-#[command(name = "lynx-agent", about = "Lynx Agent")]
+#[command(name = "helmly-agent", about = "Helmly Agent")]
 struct Cli {
     #[command(subcommand)]
     command: Option<AgentCommand>,
@@ -405,11 +405,11 @@ async fn main() -> anyhow::Result<()> {
 
     match tls_acceptor {
         Some(acceptor) => {
-            info!("lynx-agent listening on {listen_addr} (mTLS)");
+            info!("helmly-agent listening on {listen_addr} (mTLS)");
             serve_tls(listener, app, acceptor).await?;
         }
         None => {
-            info!("lynx-agent listening on {listen_addr} (plain HTTP — TLS certs not configured)");
+            info!("helmly-agent listening on {listen_addr} (plain HTTP — TLS certs not configured)");
             axum::serve(listener, app).await?;
         }
     }
