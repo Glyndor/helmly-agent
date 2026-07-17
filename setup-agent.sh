@@ -592,7 +592,7 @@ log_ok "$HELMLY_DIR"
 log_section "Downloading helmly-agent binary"
 
 GITHUB_REPO="Glyndor/helmly-agent"
-RELEASE_VERIFY_KEY_B64="APh+kh61dJeT0HzG+KQXELzDjK4ccvqY9K+FptOZ3+Y="
+RELEASE_VERIFY_KEY_B64="HFv7vg5FCY7YyKUDbJhaQSfB9SboJGSblJtFbLmLHzM="
 
 _ARCH=$(uname -m)
 case "$_ARCH" in
