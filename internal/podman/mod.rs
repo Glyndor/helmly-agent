@@ -16,7 +16,8 @@ pub fn ensure_tenant_user(tenant_id: &str) -> Result<()> {
 
     if !exists {
         // Parent dir must exist before useradd --create-home runs.
-        std::fs::create_dir_all("/var/lib/glyndor/helmly/orgs").context("create /var/lib/glyndor/helmly/orgs")?;
+        std::fs::create_dir_all("/var/lib/glyndor/helmly/orgs")
+            .context("create /var/lib/glyndor/helmly/orgs")?;
 
         // Create system user with a real home dir so rootless Podman can store its
         // images/containers under ~/.local/share/containers/ and find its socket.

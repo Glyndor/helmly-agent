@@ -409,7 +409,9 @@ async fn main() -> anyhow::Result<()> {
             serve_tls(listener, app, acceptor).await?;
         }
         None => {
-            info!("helmly-agent listening on {listen_addr} (plain HTTP — TLS certs not configured)");
+            info!(
+                "helmly-agent listening on {listen_addr} (plain HTTP — TLS certs not configured)"
+            );
             axum::serve(listener, app).await?;
         }
     }

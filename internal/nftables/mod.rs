@@ -389,7 +389,10 @@ mod tests {
     fn render_contains_helmly_base_chain() {
         let r = minimal_ruleset();
         let out = render_ruleset(&r);
-        assert!(out.contains("chain helmly-base"), "helmly-base chain missing");
+        assert!(
+            out.contains("chain helmly-base"),
+            "helmly-base chain missing"
+        );
     }
 
     #[test]
@@ -406,7 +409,10 @@ mod tests {
     fn render_contains_helmly_local_chain() {
         let r = minimal_ruleset();
         let out = render_ruleset(&r);
-        assert!(out.contains("chain helmly-local"), "helmly-local chain missing");
+        assert!(
+            out.contains("chain helmly-local"),
+            "helmly-local chain missing"
+        );
     }
 
     #[test]
