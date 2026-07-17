@@ -156,7 +156,7 @@ pub fn handle_wg_data_plane_setup(cmd: &VerifiedCommand) -> std::result::Result<
 
     let config = Zeroizing::new(format!(
         "[Interface]\nPrivateKey = {}\nAddress = {local_ip_cidr}\nListenPort = {wg_port}\n\n[Peer]\nPublicKey = {peer_pubkey}\nPresharedKey = {}\nAllowedIPs = {peer_allowed}\n{endpoint_line}",
-        &*local_privkey, &*psk
+        *local_privkey, *psk
     ));
 
     {

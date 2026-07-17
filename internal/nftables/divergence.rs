@@ -133,7 +133,7 @@ async fn notify_dashboard(state: &AppState, chain: &str, critical: bool) {
     let client = reqwest::Client::new();
     match client
         .post(&url)
-        .header("Authorization", format!("Bearer {}", &**sync_token))
+        .header("Authorization", format!("Bearer {}", **sync_token))
         .json(&body)
         .timeout(std::time::Duration::from_secs(10))
         .send()

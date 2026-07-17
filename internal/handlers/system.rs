@@ -337,7 +337,7 @@ async fn handle_db_rotate_password(
     // new_pass is hex [0-9a-f] so "$$" can never appear inside it.
     sqlx::query(&format!(
         "ALTER USER helmly_agent_app PASSWORD $${}$$",
-        &*new_pass
+        *new_pass
     ))
     .execute(&state.db)
     .await
