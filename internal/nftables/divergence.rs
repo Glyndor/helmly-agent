@@ -31,15 +31,15 @@ async fn check_once(state: &AppState) {
     }
 
     // Detect which chains were modified for appropriate severity / logging.
-    let base_diverged = is_chain_diverged(state, "lynx-base");
-    let global_diverged = is_chain_diverged(state, "lynx-global");
-    let local_diverged = is_chain_diverged(state, "lynx-local");
+    let base_diverged = is_chain_diverged(state, "helmly-base");
+    let global_diverged = is_chain_diverged(state, "helmly-global");
+    let local_diverged = is_chain_diverged(state, "helmly-local");
 
     if base_diverged {
         error!(
             expected = %&expected[..16],
             current  = %&current[..16],
-            "CRITICAL: lynx-base chain modified outside Lynx — auto-restoring"
+            "CRITICAL: helmly-base chain modified outside Helmly — auto-restoring"
         );
     } else {
         warn!(
@@ -64,11 +64,11 @@ async fn check_once(state: &AppState) {
     }
 
     let chain = if base_diverged {
-        "lynx-base"
+        "helmly-base"
     } else if global_diverged {
-        "lynx-global"
+        "helmly-global"
     } else if local_diverged {
-        "lynx-local"
+        "helmly-local"
     } else {
         "unknown"
     };
@@ -78,9 +78,9 @@ async fn check_once(state: &AppState) {
 
 fn is_chain_diverged(state: &AppState, chain: &str) -> bool {
     let idx = match chain {
-        "lynx-base" => 0,
-        "lynx-global" => 1,
-        "lynx-local" => 2,
+        "helmly-base" => 0,
+        "helmly-global" => 1,
+        "helmly-local" => 2,
         _ => return false,
     };
     let expected = match state.expected_chain_checksum(idx) {
@@ -104,9 +104,9 @@ fn restore(state: &AppState) -> anyhow::Result<()> {
     let checksum = super::current_checksum()?;
     state.set_nft_checksum(checksum);
     state.set_nft_chain_checksums(
-        super::chain_checksum("lynx-base").ok(),
-        super::chain_checksum("lynx-global").ok(),
-        super::chain_checksum("lynx-local").ok(),
+        super::chain_checksum("helmly-base").ok(),
+        super::chain_checksum("helmly-global").ok(),
+        super::chain_checksum("helmly-local").ok(),
     );
     Ok(())
 }
@@ -133,7 +133,7 @@ async fn notify_dashboard(state: &AppState, chain: &str, critical: bool) {
     let client = reqwest::Client::new();
     match client
         .post(&url)
-        .header("Authorization", format!("Bearer {}", &**sync_token))
+        .header("Authorization", format!("Bearer {}", **sync_token))
         .json(&body)
         .timeout(std::time::Duration::from_secs(10))
         .send()

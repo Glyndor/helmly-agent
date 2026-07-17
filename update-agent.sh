@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # -----------------------------------------------------------------------------
-# update-agent.sh — Lynx Agent update script
+# update-agent.sh — Helmly Agent update script
 #
 # Description:
-#   Updates the Lynx Agent to the latest available release.
+#   Updates the Helmly Agent to the latest available release.
 #   Downloads the binary from GitHub Releases, verifies Ed25519 signature,
 #   swaps atomically with .prev backup, and restarts the systemd service.
 #   Preserves all data, secrets, WireGuard config, and nftables rules.
@@ -13,7 +13,7 @@
 #   sudo ./update-agent.sh --force   (update even if already at latest)
 #
 # Requirements:
-#   - Lynx Agent already installed (run setup-agent.sh first)
+#   - Helmly Agent already installed (run setup-agent.sh first)
 #   - Run as root
 #   - Internet access to GitHub Releases
 # -----------------------------------------------------------------------------
@@ -39,10 +39,10 @@ log_section() { echo -e "\n${BOLD}${CYAN}=== $* ===${RESET}"; }
 
 # --- Constants --------------------------------------------------------------
 
-BIN_DIR="/etc/lynx/bin"
-BINARY_PATH="$BIN_DIR/lynx-agent"
-GITHUB_REPO="Glyndor/panel-agent"
-VERSION_FILE="$BIN_DIR/lynx-agent-version"
+BIN_DIR="/etc/glyndor/helmly/bin"
+BINARY_PATH="$BIN_DIR/helmly-agent"
+GITHUB_REPO="Glyndor/helmly-agent"
+VERSION_FILE="$BIN_DIR/helmly-agent-version"
 FORCE=false
 
 # --- Parse args -------------------------------------------------------------
@@ -64,7 +64,7 @@ fi
 # --- Installation check -----------------------------------------------------
 
 if [[ ! -f "$BINARY_PATH" ]]; then
-    log_error "Lynx Agent not installed — run setup-agent.sh first"
+    log_error "Helmly Agent not installed — run setup-agent.sh first"
     exit 1
 fi
 
@@ -162,13 +162,13 @@ RELEASE_BASE="https://github.com/${GITHUB_REPO}/releases/download/${LATEST_TAG}"
 
 log_section "Downloading agent binary"
 
-AGENT_TMP="${BIN_DIR}/lynx-agent.new"
+AGENT_TMP="${BIN_DIR}/helmly-agent.new"
 
 curl -fsSL --max-time 300 \
-    "${RELEASE_BASE}/lynx-agent-linux-${ARCH}" \
+    "${RELEASE_BASE}/helmly-agent-linux-${ARCH}" \
     -o "$AGENT_TMP"
 curl -fsSL --max-time 30 \
-    "${RELEASE_BASE}/lynx-agent-linux-${ARCH}.sig" \
+    "${RELEASE_BASE}/helmly-agent-linux-${ARCH}.sig" \
     -o "${AGENT_TMP}.sig"
 
 log_info "Verifying agent signature..."
@@ -189,34 +189,34 @@ cp -f "$BINARY_PATH" "${BINARY_PATH}.prev" 2>/dev/null || true
 mv "$AGENT_TMP" "$BINARY_PATH"
 log_ok "Agent binary swapped"
 
-log_info "Restarting lynx-agent service..."
-if ! systemctl restart lynx-agent.service; then
+log_info "Restarting helmly-agent service..."
+if ! systemctl restart helmly-agent.service; then
     log_error "Service failed to restart after update"
     if [[ -f "${BINARY_PATH}.prev" ]]; then
         log_warn "Restoring previous binary..."
         mv "${BINARY_PATH}.prev" "$BINARY_PATH"
-        systemctl restart lynx-agent.service || true
+        systemctl restart helmly-agent.service || true
         log_error "Previous version restored — investigate before retrying"
     fi
-    journalctl -u lynx-agent.service --no-pager -n 30 2>/dev/null || true
+    journalctl -u helmly-agent.service --no-pager -n 30 2>/dev/null || true
     exit 1
 fi
 
 sleep 3
 
-if ! systemctl is-active --quiet lynx-agent.service; then
-    log_error "lynx-agent is not running after update"
+if ! systemctl is-active --quiet helmly-agent.service; then
+    log_error "helmly-agent is not running after update"
     if [[ -f "${BINARY_PATH}.prev" ]]; then
         log_warn "Restoring previous binary..."
         mv "${BINARY_PATH}.prev" "$BINARY_PATH"
-        systemctl restart lynx-agent.service || true
+        systemctl restart helmly-agent.service || true
         log_error "Previous version restored — investigate before retrying"
     fi
-    systemctl status lynx-agent.service --no-pager 2>/dev/null || true
+    systemctl status helmly-agent.service --no-pager 2>/dev/null || true
     exit 1
 fi
 
-log_ok "lynx-agent running with new binary"
+log_ok "helmly-agent running with new binary"
 
 # --- Write version file -----------------------------------------------------
 
@@ -227,7 +227,7 @@ printf '%s' "$LATEST_VERSION" > "$VERSION_FILE"
 log_section "Update complete"
 
 echo ""
-echo -e "${GREEN}${BOLD}Lynx Agent updated to v${LATEST_VERSION}${RESET}"
+echo -e "${GREEN}${BOLD}Helmly Agent updated to v${LATEST_VERSION}${RESET}"
 if [[ -n "$CURRENT_VERSION" ]]; then
     echo -e "  ${BOLD}Previous version:${RESET} $CURRENT_VERSION"
 fi
@@ -239,7 +239,7 @@ if [[ -f "${BINARY_PATH}.prev" ]]; then
 fi
 echo ""
 echo -e "  If something fails:"
-echo -e "    ${BOLD}lynx-agent logs --errors${RESET}"
+echo -e "    ${BOLD}helmly-agent logs --errors${RESET}"
 echo ""
-echo -e "  ${BOLD}Made with love by Jaroc${RESET} — https://github.com/Glyndor/panel"
+echo -e "  ${BOLD}Made with love by Jaroc${RESET} — https://github.com/Glyndor/helmly"
 echo ""

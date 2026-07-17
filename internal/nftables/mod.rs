@@ -4,26 +4,26 @@ use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use std::process::Command;
 
-const TABLE: &str = "lynx-agent";
+const TABLE: &str = "helmly-agent";
 
 /// Full structure of the managed ruleset.
-/// lynx-base holds the immutable invariants.
-/// lynx-global / lynx-local hold dashboard-pushed input rules.
-/// lynx-global-output / lynx-local-output hold dashboard-pushed output rules.
+/// helmly-base holds the immutable invariants.
+/// helmly-global / helmly-local hold dashboard-pushed input rules.
+/// helmly-global-output / helmly-local-output hold dashboard-pushed output rules.
 pub struct Ruleset {
     /// WireGuard UDP port for management plane
     pub wireguard_port: u16,
-    /// Dashboard panel port opened in lynx-base (Some(19443) on dashboard VPS, None on remote agents).
+    /// Dashboard panel port opened in helmly-base (Some(19443) on dashboard VPS, None on remote agents).
     pub dashboard_port: Option<u16>,
     /// Per-org blocked subnets (org isolation — inter-org traffic blocked)
     pub org_networks: Vec<OrgNetwork>,
-    /// Input rules body for the lynx-global chain (dashboard-pushed, applies to all agents)
+    /// Input rules body for the helmly-global chain (dashboard-pushed, applies to all agents)
     pub global_body: String,
-    /// Input rules body for the lynx-local chain (dashboard-pushed, this agent only)
+    /// Input rules body for the helmly-local chain (dashboard-pushed, this agent only)
     pub local_body: String,
-    /// Output rules body for the lynx-global-output chain (dashboard-pushed, applies to all agents)
+    /// Output rules body for the helmly-global-output chain (dashboard-pushed, applies to all agents)
     pub global_output_body: String,
-    /// Output rules body for the lynx-local-output chain (dashboard-pushed, this agent only)
+    /// Output rules body for the helmly-local-output chain (dashboard-pushed, this agent only)
     pub local_output_body: String,
     /// Dashboard WireGuard IP for source-IP restriction on the WG inbound rule.
     /// Some(ip) on remote agents — restricts `udp dport {wg}` to that source only.
@@ -59,7 +59,7 @@ pub fn extract_url_host(url: &str) -> Option<String> {
     }
 }
 
-/// Apply the full lynx-agent nftables ruleset atomically.
+/// Apply the full helmly-agent nftables ruleset atomically.
 /// Replaces the entire table on every call — never incremental.
 /// Returns the rendered ruleset string so callers can store it for restore.
 pub fn apply(ruleset: &Ruleset) -> Result<String> {
@@ -87,32 +87,32 @@ pub fn apply_emergency() -> Result<()> {
 
 /// Persist the active ruleset to disk so nftables.service can reload it on boot.
 fn persist_ruleset(nft: &str) {
-    if let Err(e) = std::fs::write("/etc/nftables-lynx-agent.conf", nft) {
+    if let Err(e) = std::fs::write("/etc/nftables-helmly-agent.conf", nft) {
         tracing::warn!(error = %e, "failed to persist nftables ruleset to disk");
     }
 }
 
 const EMERGENCY_RULESET: &str = r#"
-destroy table inet lynx-agent
-add table inet lynx-agent
-table inet lynx-agent {
-    chain lynx-base {
+destroy table inet helmly-agent
+add table inet helmly-agent
+table inet helmly-agent {
+    chain helmly-base {
         type filter hook input priority 0; policy drop;
         ct state established,related accept
         iifname "lo" accept
         udp dport 51820 accept
         drop
     }
-    chain lynx-forward {
+    chain helmly-forward {
         type filter hook forward priority 0; policy drop;
     }
-    chain lynx-output {
+    chain helmly-output {
         type filter hook output priority 0; policy accept;
     }
 }
 "#;
 
-/// Compute checksum of the live lynx-agent table for divergence detection.
+/// Compute checksum of the live helmly-agent table for divergence detection.
 pub fn current_checksum() -> Result<String> {
     chain_checksum_raw(&["list", "table", "inet", TABLE])
 }
@@ -170,15 +170,15 @@ fn render_ruleset(r: &Ruleset) -> String {
     };
 
     // Netavark DNAT rewrites the destination from the host IP to the container IP
-    // (10.89.x.x) in PREROUTING. Without a forward rule, lynx-forward policy drop
+    // (10.89.x.x) in PREROUTING. Without a forward rule, helmly-forward policy drop
     // kills these packets before they reach the container. This applies to ALL agents:
     // the agent's own PostgreSQL container is also published via DNAT.
     let container_forward_rules = "\n        # New connections to published container ports (Netavark DNAT rewrites dst to 10.89.x.x)\n        ip daddr 10.89.0.0/16 ct state new accept\n\n        # Outbound traffic from Podman containers (package installs, GitHub, cert renewals, etc.)\n        iifname \"podman*\" accept\n";
 
     // WireGuard forward rules — dashboard VPS only.
-    // Backend container needs to route through wg-lynx-dash to reach remote agents.
+    // Backend container needs to route through wg-helmly-dash to reach remote agents.
     let dashboard_wg_forward_rules = if r.dashboard_port.is_some() {
-        "\n        # Backend container traffic to/from WireGuard (dashboard <-> agents)\n        oifname \"wg-lynx-dash\" accept\n        iifname \"wg-lynx-dash\" accept\n"
+        "\n        # Backend container traffic to/from WireGuard (dashboard <-> agents)\n        oifname \"wg-helmly-dash\" accept\n        iifname \"wg-helmly-dash\" accept\n"
     } else {
         ""
     };
@@ -199,7 +199,7 @@ destroy table inet {TABLE}
 add table inet {TABLE}
 table inet {TABLE} {{
     # Immutable invariants — never editable from dashboard
-    chain lynx-base {{
+    chain helmly-base {{
         type filter hook input priority 0; policy drop;
 
         # Established/related
@@ -223,23 +223,23 @@ table inet {TABLE} {{
 {dashboard_port}
 {dashboard_dns}
         # Run global and local rule chains
-        jump lynx-global
-        jump lynx-local
+        jump helmly-global
+        jump helmly-local
 
         drop
     }}
 
     # Dashboard global rules — input, apply to all agents
-    chain lynx-global {{
+    chain helmly-global {{
 {global}
     }}
 
     # Dashboard local rules — input, apply to this agent only
-    chain lynx-local {{
+    chain helmly-local {{
 {local}
     }}
 
-    chain lynx-forward {{
+    chain helmly-forward {{
         type filter hook forward priority 0; policy drop;
 
         ct state established,related accept
@@ -267,7 +267,7 @@ table inet {TABLE} {{
     out.push_str(&format!(
         r#"    }}
 
-    chain lynx-output {{
+    chain helmly-output {{
         type filter hook output priority 0; policy accept;
 
         # Dashboard global output rules — apply to all agents
@@ -331,7 +331,7 @@ mod tests {
         let r = minimal_ruleset();
         let out = render_ruleset(&r);
         assert!(
-            out.contains("table inet lynx-agent"),
+            out.contains("table inet helmly-agent"),
             "table declaration missing"
         );
     }
@@ -386,46 +386,52 @@ mod tests {
     }
 
     #[test]
-    fn render_contains_lynx_base_chain() {
-        let r = minimal_ruleset();
-        let out = render_ruleset(&r);
-        assert!(out.contains("chain lynx-base"), "lynx-base chain missing");
-    }
-
-    #[test]
-    fn render_contains_lynx_global_chain() {
+    fn render_contains_helmly_base_chain() {
         let r = minimal_ruleset();
         let out = render_ruleset(&r);
         assert!(
-            out.contains("chain lynx-global"),
-            "lynx-global chain missing"
+            out.contains("chain helmly-base"),
+            "helmly-base chain missing"
         );
     }
 
     #[test]
-    fn render_contains_lynx_local_chain() {
-        let r = minimal_ruleset();
-        let out = render_ruleset(&r);
-        assert!(out.contains("chain lynx-local"), "lynx-local chain missing");
-    }
-
-    #[test]
-    fn render_contains_lynx_forward_chain() {
+    fn render_contains_helmly_global_chain() {
         let r = minimal_ruleset();
         let out = render_ruleset(&r);
         assert!(
-            out.contains("chain lynx-forward"),
-            "lynx-forward chain missing"
+            out.contains("chain helmly-global"),
+            "helmly-global chain missing"
         );
     }
 
     #[test]
-    fn render_contains_lynx_output_chain() {
+    fn render_contains_helmly_local_chain() {
         let r = minimal_ruleset();
         let out = render_ruleset(&r);
         assert!(
-            out.contains("chain lynx-output"),
-            "lynx-output chain missing"
+            out.contains("chain helmly-local"),
+            "helmly-local chain missing"
+        );
+    }
+
+    #[test]
+    fn render_contains_helmly_forward_chain() {
+        let r = minimal_ruleset();
+        let out = render_ruleset(&r);
+        assert!(
+            out.contains("chain helmly-forward"),
+            "helmly-forward chain missing"
+        );
+    }
+
+    #[test]
+    fn render_contains_helmly_output_chain() {
+        let r = minimal_ruleset();
+        let out = render_ruleset(&r);
+        assert!(
+            out.contains("chain helmly-output"),
+            "helmly-output chain missing"
         );
     }
 
@@ -529,40 +535,40 @@ mod tests {
         let r = minimal_ruleset();
         let out = render_ruleset(&r);
         assert!(
-            out.contains("destroy table inet lynx-agent"),
+            out.contains("destroy table inet helmly-agent"),
             "idempotent prefix missing: destroy table"
         );
         assert!(
-            out.contains("add table inet lynx-agent"),
+            out.contains("add table inet helmly-agent"),
             "idempotent prefix missing: add table"
         );
     }
 
     #[test]
-    fn render_lynx_base_contains_ssh() {
+    fn render_helmly_base_contains_ssh() {
         let r = minimal_ruleset();
         let out = render_ruleset(&r);
         assert!(
             out.contains("tcp dport 22"),
-            "SSH accept missing from lynx-base"
+            "SSH accept missing from helmly-base"
         );
         assert!(
             out.contains("ssh_throttle"),
-            "SSH rate-limit meter missing from lynx-base"
+            "SSH rate-limit meter missing from helmly-base"
         );
     }
 
     #[test]
-    fn render_lynx_base_contains_icmp() {
+    fn render_helmly_base_contains_icmp() {
         let r = minimal_ruleset();
         let out = render_ruleset(&r);
         assert!(
             out.contains("ip protocol icmp accept"),
-            "ICMP v4 accept missing from lynx-base"
+            "ICMP v4 accept missing from helmly-base"
         );
         assert!(
             out.contains("ip6 nexthdr icmpv6 accept"),
-            "ICMP v6 accept missing from lynx-base"
+            "ICMP v6 accept missing from helmly-base"
         );
     }
 
@@ -626,11 +632,11 @@ mod tests {
             "container outbound forward rule missing when dashboard_port set"
         );
         assert!(
-            out.contains("oifname \"wg-lynx-dash\" accept"),
+            out.contains("oifname \"wg-helmly-dash\" accept"),
             "WireGuard outbound forward rule missing when dashboard_port set"
         );
         assert!(
-            out.contains("iifname \"wg-lynx-dash\" accept"),
+            out.contains("iifname \"wg-helmly-dash\" accept"),
             "WireGuard inbound forward rule missing when dashboard_port set"
         );
     }
@@ -640,7 +646,7 @@ mod tests {
         let r = minimal_ruleset();
         let out = render_ruleset(&r);
         assert!(
-            !out.contains("wg-lynx-dash"),
+            !out.contains("wg-helmly-dash"),
             "WireGuard forward rules should not appear when dashboard_port is None"
         );
     }
@@ -668,12 +674,12 @@ mod tests {
         assert!(!EMERGENCY_RULESET.is_empty());
         assert!(EMERGENCY_RULESET.contains("policy drop"));
         assert!(EMERGENCY_RULESET.contains("51820"));
-        assert!(EMERGENCY_RULESET.contains("lynx-agent"));
+        assert!(EMERGENCY_RULESET.contains("helmly-agent"));
     }
 
     #[test]
     fn emergency_ruleset_has_destroy_add_prefix() {
-        assert!(EMERGENCY_RULESET.contains("destroy table inet lynx-agent"));
-        assert!(EMERGENCY_RULESET.contains("add table inet lynx-agent"));
+        assert!(EMERGENCY_RULESET.contains("destroy table inet helmly-agent"));
+        assert!(EMERGENCY_RULESET.contains("add table inet helmly-agent"));
     }
 }

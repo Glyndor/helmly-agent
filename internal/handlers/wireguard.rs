@@ -17,7 +17,7 @@ pub fn handle_wg_rotate_psk(cmd: &VerifiedCommand) -> std::result::Result<Value,
     let new_psk = Zeroizing::new(require_str(&cmd.command, "new_psk")?.to_string());
 
     let peers_out = std::process::Command::new("wg")
-        .args(["show", "wg-lynx-agent", "peers"])
+        .args(["show", "wg-helmly-agent", "peers"])
         .output()
         .map_err(|e| AgentError::Internal(anyhow::anyhow!("wg show: {e}")))?;
 
@@ -37,7 +37,7 @@ pub fn handle_wg_rotate_psk(cmd: &VerifiedCommand) -> std::result::Result<Value,
     let mut child = std::process::Command::new("wg")
         .args([
             "set",
-            "wg-lynx-agent",
+            "wg-helmly-agent",
             "peer",
             &dashboard_pubkey,
             "preshared-key",
@@ -64,7 +64,7 @@ pub fn handle_wg_rotate_psk(cmd: &VerifiedCommand) -> std::result::Result<Value,
     }
 
     // Persist new PSK to credential file so it survives agent restarts.
-    const PSK_PATH: &str = "/etc/lynx/credentials/lynx-wg-psk";
+    const PSK_PATH: &str = "/etc/glyndor/helmly/credentials/helmly-wg-psk";
     if let Err(e) = std::fs::write(PSK_PATH, new_psk.as_bytes()) {
         tracing::warn!("failed to persist new PSK to {PSK_PATH}: {e}");
     } else {
@@ -79,7 +79,7 @@ pub fn handle_wg_rotate_psk(cmd: &VerifiedCommand) -> std::result::Result<Value,
     // Also update the wg-quick conf so the PSK survives a full reboot.
     // wg-quick reads PresharedKey from the conf at boot; if it diverges from the
     // credential file the tunnel breaks after the next reboot.
-    const WG_CONF_PATH: &str = "/etc/lynx/wireguard/lynx-wg.conf";
+    const WG_CONF_PATH: &str = "/etc/glyndor/helmly/wireguard/helmly-wg.conf";
     match std::fs::read_to_string(WG_CONF_PATH) {
         Ok(conf) => {
             let updated = conf
@@ -120,7 +120,7 @@ pub fn handle_wg_data_plane_setup(cmd: &VerifiedCommand) -> std::result::Result<
             "tunnel_id produces invalid interface suffix",
         ));
     }
-    let interface = format!("wg-lynx-dp-{iface_suffix}");
+    let interface = format!("wg-helmly-dp-{iface_suffix}");
 
     let local_privkey = Zeroizing::new(require_str(&cmd.command, "private_key")?.to_string());
     let local_ip_cidr = require_str(&cmd.command, "local_ip")?;
@@ -156,7 +156,7 @@ pub fn handle_wg_data_plane_setup(cmd: &VerifiedCommand) -> std::result::Result<
 
     let config = Zeroizing::new(format!(
         "[Interface]\nPrivateKey = {}\nAddress = {local_ip_cidr}\nListenPort = {wg_port}\n\n[Peer]\nPublicKey = {peer_pubkey}\nPresharedKey = {}\nAllowedIPs = {peer_allowed}\n{endpoint_line}",
-        &*local_privkey, &*psk
+        *local_privkey, *psk
     ));
 
     {
@@ -212,7 +212,7 @@ pub fn handle_wg_data_plane_teardown(
             "tunnel_id produces invalid interface suffix",
         ));
     }
-    let interface = format!("wg-lynx-dp-{iface_suffix}");
+    let interface = format!("wg-helmly-dp-{iface_suffix}");
     let config_path = format!("/etc/wireguard/{interface}.conf");
 
     let _ = std::process::Command::new("wg-quick")
@@ -225,9 +225,9 @@ pub fn handle_wg_data_plane_teardown(
     Ok(json!({ "ok": true, "interface": interface }))
 }
 
-const MGMT_IFACE: &str = "wg-lynx-dash";
+const MGMT_IFACE: &str = "wg-helmly-dash";
 
-/// Add a peer to the management-plane WireGuard interface (`wg-lynx-dash`).
+/// Add a peer to the management-plane WireGuard interface (`wg-helmly-dash`).
 /// Called by the dashboard when a new remote agent is registered.
 pub fn handle_wg_management_add_peer(
     cmd: &VerifiedCommand,
@@ -275,7 +275,7 @@ pub fn handle_wg_management_add_peer(
     Ok(json!({ "ok": true }))
 }
 
-/// Remove a peer from the management-plane WireGuard interface (`wg-lynx-dash`).
+/// Remove a peer from the management-plane WireGuard interface (`wg-helmly-dash`).
 pub fn handle_wg_management_remove_peer(
     cmd: &VerifiedCommand,
 ) -> std::result::Result<Value, AgentError> {
@@ -300,7 +300,7 @@ pub fn handle_wg_management_remove_peer(
     Ok(json!({ "ok": true }))
 }
 
-/// List peers on the management-plane WireGuard interface (`wg-lynx-dash`).
+/// List peers on the management-plane WireGuard interface (`wg-helmly-dash`).
 /// Returns a JSON array of base64 public keys.
 pub fn handle_wg_management_list_peers(
     cmd: &VerifiedCommand,

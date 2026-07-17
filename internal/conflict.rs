@@ -5,7 +5,7 @@ use tokio::time::interval;
 const CHECK_INTERVAL_SECS: u64 = 300;
 
 /// Conflicting software list — anything that manages its own firewall or container network
-/// can silently bypass nftables rules managed by Lynx.
+/// can silently bypass nftables rules managed by Helmly.
 static INCOMPATIBLE: &[IncompatibleSoftware] = &[
     IncompatibleSoftware {
         name: "docker",
@@ -326,7 +326,7 @@ mod tests {
     #[test]
     fn command_exists_returns_false_for_nonexistent_command() {
         assert!(!command_exists(
-            "lynx_definitely_not_a_real_command_xyz_12345"
+            "helmly_definitely_not_a_real_command_xyz_12345"
         ));
     }
 }
