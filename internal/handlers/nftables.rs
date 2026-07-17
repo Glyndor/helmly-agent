@@ -22,13 +22,13 @@ pub async fn handle_nftables_apply(
             .to_string();
 
         match chain {
-            "lynx-global" => state.set_nft_global_body(rules.clone()),
-            "lynx-local" => state.set_nft_local_body(rules.clone()),
-            "lynx-global-output" => state.set_nft_global_output_body(rules.clone()),
-            "lynx-local-output" => state.set_nft_local_output_body(rules.clone()),
+            "helmly-global" => state.set_nft_global_body(rules.clone()),
+            "helmly-local" => state.set_nft_local_body(rules.clone()),
+            "helmly-global-output" => state.set_nft_global_output_body(rules.clone()),
+            "helmly-local-output" => state.set_nft_local_output_body(rules.clone()),
             _ => {
                 return Err(AgentError::BadRequest(
-                    "unknown chain: must be lynx-global, lynx-local, lynx-global-output, or lynx-local-output",
+                    "unknown chain: must be helmly-global, helmly-local, helmly-global-output, or helmly-local-output",
                 ))
             }
         }
@@ -82,9 +82,9 @@ fn apply_current_ruleset(state: &AppState) -> std::result::Result<Value, AgentEr
     let checksum = nftables::current_checksum()?;
     state.set_nft_checksum(checksum);
     state.set_nft_chain_checksums(
-        nftables::chain_checksum("lynx-base").ok(),
-        nftables::chain_checksum("lynx-global").ok(),
-        nftables::chain_checksum("lynx-local").ok(),
+        nftables::chain_checksum("helmly-base").ok(),
+        nftables::chain_checksum("helmly-global").ok(),
+        nftables::chain_checksum("helmly-local").ok(),
     );
     state.set_nft_last_ruleset(rendered);
 
@@ -110,9 +110,9 @@ pub fn handle_nftables_restore(
     let checksum = nftables::current_checksum()?;
     state.set_nft_checksum(checksum);
     state.set_nft_chain_checksums(
-        nftables::chain_checksum("lynx-base").ok(),
-        nftables::chain_checksum("lynx-global").ok(),
-        nftables::chain_checksum("lynx-local").ok(),
+        nftables::chain_checksum("helmly-base").ok(),
+        nftables::chain_checksum("helmly-global").ok(),
+        nftables::chain_checksum("helmly-local").ok(),
     );
 
     Ok(json!({ "ok": true, "action": "restored" }))

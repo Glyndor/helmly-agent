@@ -1,11 +1,11 @@
 use anyhow::{Context, Result};
 use std::process::Command;
 
-/// Tenant isolation: each org gets a `lynx-tenant-{id}` system user
+/// Tenant isolation: each org gets a `helmly-tenant-{id}` system user
 /// with dedicated subuid/subgid range for rootless Podman.
 pub fn ensure_tenant_user(tenant_id: &str) -> Result<()> {
-    let username = format!("lynx-tenant-{tenant_id}");
-    let home_dir = format!("/var/lib/lynx/orgs/{tenant_id}");
+    let username = format!("helmly-tenant-{tenant_id}");
+    let home_dir = format!("/var/lib/glyndor/helmly/orgs/{tenant_id}");
 
     // Check if user already exists
     let exists = Command::new("id")
@@ -16,7 +16,8 @@ pub fn ensure_tenant_user(tenant_id: &str) -> Result<()> {
 
     if !exists {
         // Parent dir must exist before useradd --create-home runs.
-        std::fs::create_dir_all("/var/lib/lynx/orgs").context("create /var/lib/lynx/orgs")?;
+        std::fs::create_dir_all("/var/lib/glyndor/helmly/orgs")
+            .context("create /var/lib/glyndor/helmly/orgs")?;
 
         // Create system user with a real home dir so rootless Podman can store its
         // images/containers under ~/.local/share/containers/ and find its socket.
@@ -60,14 +61,14 @@ pub fn ensure_tenant_user(tenant_id: &str) -> Result<()> {
 /// shell interpretation — prevents command injection through container/image names.
 /// Sets HOME and XDG_RUNTIME_DIR so rootless Podman finds its storage and socket.
 pub fn podman_as_tenant(tenant_id: &str, args: &[&str]) -> Result<std::process::Output> {
-    let username = format!("lynx-tenant-{tenant_id}");
+    let username = format!("helmly-tenant-{tenant_id}");
     let uid = tenant_uid(tenant_id)?;
     // Start in / so the tenant user can always access the cwd (their home or
     // a restricted directory might not be world-readable).
     Command::new("runuser")
         .args(["-u", &username, "--", "podman"])
         .args(args)
-        .env("HOME", format!("/var/lib/lynx/orgs/{tenant_id}"))
+        .env("HOME", format!("/var/lib/glyndor/helmly/orgs/{tenant_id}"))
         .env("XDG_RUNTIME_DIR", format!("/run/user/{uid}"))
         .current_dir("/")
         .output()
@@ -284,11 +285,11 @@ pub fn container_update(
 // ---------------------------------------------------------------------------
 
 fn project_dir(tenant_id: &str, project_id: &str) -> String {
-    format!("/var/lib/lynx/projects/{tenant_id}/{project_id}")
+    format!("/var/lib/glyndor/helmly/projects/{tenant_id}/{project_id}")
 }
 
 fn tenant_uid(tenant_id: &str) -> Result<u32> {
-    let username = format!("lynx-tenant-{tenant_id}");
+    let username = format!("helmly-tenant-{tenant_id}");
     let out = Command::new("id")
         .args(["-u", &username])
         .output()

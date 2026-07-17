@@ -125,7 +125,7 @@ async fn serve_tls(
 const HEARTBEAT_TIMEOUT_SECS: u64 = 300;
 
 #[derive(Parser)]
-#[command(name = "lynx-agent", about = "Lynx Agent")]
+#[command(name = "helmly-agent", about = "Helmly Agent")]
 struct Cli {
     #[command(subcommand)]
     command: Option<AgentCommand>,
@@ -227,10 +227,10 @@ async fn main() -> anyhow::Result<()> {
 
             for row in &rows {
                 match row.chain.as_str() {
-                    "lynx-global" => global_body = row.body.clone(),
-                    "lynx-local" => local_body = row.body.clone(),
-                    "lynx-global-output" => global_output_body = row.body.clone(),
-                    "lynx-local-output" => local_output_body = row.body.clone(),
+                    "helmly-global" => global_body = row.body.clone(),
+                    "helmly-local" => local_body = row.body.clone(),
+                    "helmly-global-output" => global_output_body = row.body.clone(),
+                    "helmly-local-output" => local_output_body = row.body.clone(),
                     _ => {}
                 }
                 wg_port = row.wg_port as u16;
@@ -261,9 +261,9 @@ async fn main() -> anyhow::Result<()> {
                         state.set_nft_checksum(checksum);
                     }
                     state.set_nft_chain_checksums(
-                        nftables::chain_checksum("lynx-base").ok(),
-                        nftables::chain_checksum("lynx-global").ok(),
-                        nftables::chain_checksum("lynx-local").ok(),
+                        nftables::chain_checksum("helmly-base").ok(),
+                        nftables::chain_checksum("helmly-global").ok(),
+                        nftables::chain_checksum("helmly-local").ok(),
                     );
                     state.set_nft_last_ruleset(rendered);
                     tracing::info!("nftables ruleset re-applied from DB on startup");
@@ -405,11 +405,13 @@ async fn main() -> anyhow::Result<()> {
 
     match tls_acceptor {
         Some(acceptor) => {
-            info!("lynx-agent listening on {listen_addr} (mTLS)");
+            info!("helmly-agent listening on {listen_addr} (mTLS)");
             serve_tls(listener, app, acceptor).await?;
         }
         None => {
-            info!("lynx-agent listening on {listen_addr} (plain HTTP — TLS certs not configured)");
+            info!(
+                "helmly-agent listening on {listen_addr} (plain HTTP — TLS certs not configured)"
+            );
             axum::serve(listener, app).await?;
         }
     }
@@ -466,7 +468,7 @@ async fn heartbeat_handler(
 
 fn agent_logs(follow: bool, errors: bool, since: Option<String>) -> anyhow::Result<()> {
     let mut args = vec![
-        "--unit=lynx-agent".to_string(),
+        "--unit=helmly-agent".to_string(),
         "--no-pager".to_string(),
         "--output=short".to_string(),
     ];

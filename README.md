@@ -1,6 +1,6 @@
-# panel-agent
+# helmly-agent
 
-`lynx-agent` — hardened server-side daemon for the [Lynx panel](https://github.com/Glyndor/panel).
+`helmly-agent` — hardened server-side daemon for the [Helmly panel](https://github.com/Glyndor/helmly).
 
 It runs on each managed VPS and executes commands sent by the dashboard:
 containers (rootless Podman), firewall (nftables), tunnels (WireGuard) and
@@ -28,8 +28,8 @@ dependency.
 
 ## Install
 
-The agent is installed and updated by the panel installer — see
-[Glyndor/panel](https://github.com/Glyndor/panel). `setup-agent.sh` and
+The agent is installed and updated by the Helmly installer — see
+[Glyndor/helmly](https://github.com/Glyndor/helmly). `setup-agent.sh` and
 `update-agent.sh` in this repository are invoked by that flow.
 
 ## Contributing & security

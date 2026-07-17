@@ -5,7 +5,7 @@ use crate::{
 use std::time::Duration;
 use tokio::time::interval;
 
-const CONTAINER_NAME: &str = "lynx-nginx";
+const CONTAINER_NAME: &str = "helmly-nginx";
 const HEALTH_CHECK_INTERVAL_SECS: u64 = 60;
 const HEALTH_URL: &str = "http://127.0.0.1:80/_health";
 const MAX_REDEPLOY_ATTEMPTS: u32 = 3;
@@ -150,7 +150,7 @@ async fn restore_nginx_config(state: &AppState) {
         }
     };
 
-    let config_path = "/etc/nginx/conf.d/lynx.conf";
+    let config_path = "/etc/nginx/conf.d/helmly.conf";
     if let Err(e) = std::fs::write(config_path, config) {
         tracing::error!("failed to write nginx config: {e}");
         return;
