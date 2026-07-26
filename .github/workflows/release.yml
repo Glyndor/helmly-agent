@@ -91,7 +91,32 @@ jobs:
           BINARY="target/${{ matrix.rust-target }}/release/helmly-agent"
           ARTIFACT="helmly-agent-linux-${{ matrix.arch }}"
           cp "$BINARY" "$ARTIFACT"
-          python3 .github/scripts/sign.py "$GLYNDOR_RELEASE_ED25519_KEY" "$ARTIFACT"
+          # The key is read from GLYNDOR_RELEASE_ED25519_KEY (env), never argv,
+          # so it does not appear in the runner's process table.
+          python3 .github/scripts/sign.py "$ARTIFACT"
+
+      - name: Verify signature against the pinned install key
+        run: |
+          set -euo pipefail
+          ARTIFACT="helmly-agent-linux-${{ matrix.arch }}"
+          # Gate: the release must verify against the exact public key the
+          # installer and self-update pin, or a fresh install would reject it
+          # (the failure that shipped a broken v1.4.0). Fail the build here,
+          # before anything is uploaded or published.
+          # Each verifier pins the key in its own syntax, so match per file.
+          pin_setup=$(grep -oE 'RELEASE_VERIFY_KEY_B64="[^"]*"' setup-agent.sh | head -1 | sed -E 's/.*="([^"]*)"/\1/')
+          pin_update=$(grep -oE 'pub_b64 = "[^"]*"' update-agent.sh | head -1 | sed -E 's/.*"([^"]*)"/\1/')
+          pin_rust=$(grep -oE 'RELEASE_VERIFY_KEY_B64: &str = "[^"]*"' internal/update/mod.rs | head -1 | sed -E 's/.*"([^"]*)".*/\1/')
+          if [ -z "$pin_setup" ]; then
+            echo "::error::no RELEASE_VERIFY_KEY_B64 pin found in setup-agent.sh"
+            exit 1
+          fi
+          if [ "$pin_setup" != "$pin_update" ] || [ "$pin_setup" != "$pin_rust" ]; then
+            echo "::error::pinned release keys disagree (setup=$pin_setup update=$pin_update rust=$pin_rust)"
+            exit 1
+          fi
+          echo "installer/self-update pin: $pin_setup"
+          python3 .github/scripts/verify-release.py "$ARTIFACT" "$pin_setup"
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0

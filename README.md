@@ -39,4 +39,4 @@ Report vulnerabilities privately via the Security tab — never in a public issu
 
 ## License
 
-[Apache-2.0](LICENSE)
+[MIT](LICENSE)
