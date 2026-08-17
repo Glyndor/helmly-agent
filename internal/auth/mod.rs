@@ -49,29 +49,78 @@ pub struct VerifiedCommand {
 }
 
 /// Full verification: signature → nonce dedup → timestamp freshness → agent_id match.
+///
+/// C2: `verify_keys` is a keyring (slice of 32-byte Ed25519 public keys).
+/// The command is accepted if any key in the ring verifies it. Two-phase
+/// rotation lands in-band: the operator pushes a transition release
+/// embedding both OLD and NEW; once every agent holds both, the operator
+/// stops signing with OLD. The same shape mirrors `podup`'s two-slot
+/// `RELEASE_PUBKEYS` (`standards/releases/index.md:52-58`).
+///
+/// Iteration order matches `&verify_keys` order. Callers load the keyring
+/// from `/etc/glyndor/helmly/dashboard-keyring` (file-on-disk, mode 0o600),
+/// seeded on first boot from the legacy `DASHBOARD_VERIFY_KEY` env so
+/// existing single-key deployments continue to verify their existing
+/// commands.
 pub async fn verify_command(
     db: &PgPool,
     signed: &SignedCommand,
-    verify_key_bytes: &[u8; 32],
+    verify_keys: &[[u8; 32]],
     own_agent_id: Uuid,
 ) -> Result<VerifiedCommand> {
+    if verify_keys.is_empty() {
+        anyhow::bail!(
+            "dashboard verify keyring is empty; refusing all commands. \
+             Re-add keys via the dashboard or remove the empty keyring file."
+        );
+    }
     // 1. Decode payload bytes + signature
     let payload_bytes =
         Base64UrlUnpadded::decode_vec(&signed.payload).context("payload: invalid base64url")?;
     let sig_bytes =
         Base64UrlUnpadded::decode_vec(&signed.signature).context("signature: invalid base64url")?;
 
-    // 2. Verify Ed25519 signature (constant-time)
-    let verifying_key =
-        VerifyingKey::from_bytes(verify_key_bytes).context("invalid dashboard verify key")?;
+    // 2. Verify Ed25519 signature against any key in the ring.
+    //    Accept the first match — the ring is unordered and the verifier
+    //    is constant-time per key.
     let sig_arr: [u8; 64] = sig_bytes
         .try_into()
         .map_err(|_| anyhow::anyhow!("signature must be 64 bytes"))?;
     let sig = Signature::from_bytes(&sig_arr);
     use ed25519_dalek::Verifier;
-    verifying_key
-        .verify(&payload_bytes, &sig)
-        .context("signature verification failed")?;
+    let mut last_err: Option<anyhow::Error> = None;
+    let mut matched = false;
+    for (i, key_bytes) in verify_keys.iter().enumerate() {
+        let verifying_key = match VerifyingKey::from_bytes(key_bytes) {
+            Ok(k) => k,
+            Err(e) => {
+                // A bad key in the ring shouldn't happen (loader validates),
+                // but treat it as fail-closed — surface the error.
+                last_err = Some(anyhow::anyhow!(
+                    "keyring slot {i} is malformed: {e}"
+                ));
+                continue;
+            }
+        };
+        match verifying_key.verify(&payload_bytes, &sig) {
+            Ok(()) => {
+                matched = true;
+                break;
+            }
+            Err(e) => {
+                last_err = Some(anyhow::anyhow!(
+                    "no key in ring verified the signature (slot {i} failed: {e})"
+                ));
+            }
+        }
+    }
+    if !matched {
+        // None of the keys in the ring verified; surface the last concrete
+        // error to the caller for diagnostics.
+        return Err(last_err.unwrap_or_else(|| {
+            anyhow::anyhow!("no key in ring verified the signature")
+        }));
+    }
 
     // 3. Parse payload
     let payload: CommandPayload =
@@ -317,7 +366,7 @@ mod tests {
         let ts = Utc::now().timestamp();
 
         let cmd = build_signed_command(&signing_key, agent_id, &nonce, ts);
-        let result = verify_command(&db, &cmd, &verify_key_bytes, agent_id).await;
+        let result = verify_command(&db, &cmd, &[verify_key_bytes], agent_id).await;
         assert!(
             result.is_ok(),
             "valid fresh command must verify: {result:?}"
@@ -335,14 +384,14 @@ mod tests {
 
         // First use — consumes nonce.
         let cmd1 = build_signed_command(&signing_key, agent_id, &nonce, ts);
-        verify_command(&db, &cmd1, &verify_key_bytes, agent_id)
+        verify_command(&db, &cmd1, &[verify_key_bytes], agent_id)
             .await
             .expect("first use of nonce must succeed");
 
         // Second use of *same nonce* with a freshly re-signed envelope (same
         // payload bytes, so same signature here) — must reject.
         let cmd2 = build_signed_command(&signing_key, agent_id, &nonce, ts);
-        let res = verify_command(&db, &cmd2, &verify_key_bytes, agent_id).await;
+        let res = verify_command(&db, &cmd2, &[verify_key_bytes], agent_id).await;
         assert!(res.is_err(), "replayed nonce must be rejected");
         let msg = format!("{:#}", res.unwrap_err());
         assert!(
@@ -360,7 +409,7 @@ mod tests {
         // 60 seconds in the past — outside the 30s skew window.
         let old_ts = Utc::now().timestamp() - 60;
         let cmd = build_signed_command(&signing_key, agent_id, &Uuid::now_v7().to_string(), old_ts);
-        let res = verify_command(&db, &cmd, &verify_key_bytes, agent_id).await;
+        let res = verify_command(&db, &cmd, &[verify_key_bytes], agent_id).await;
         assert!(res.is_err(), "expired timestamp must reject");
         assert!(
             format!("{:#}", res.unwrap_err()).contains("timestamp"),
@@ -381,7 +430,7 @@ mod tests {
             &Uuid::now_v7().to_string(),
             future_ts,
         );
-        let res = verify_command(&db, &cmd, &verify_key_bytes, agent_id).await;
+        let res = verify_command(&db, &cmd, &[verify_key_bytes], agent_id).await;
         assert!(res.is_err(), "future timestamp outside window must reject");
     }
 
@@ -400,7 +449,7 @@ mod tests {
             old_ts,
             "agent.heartbeat_ack",
         );
-        let res = verify_command(&db, &cmd, &verify_key_bytes, agent_id).await;
+        let res = verify_command(&db, &cmd, &[verify_key_bytes], agent_id).await;
         assert!(
             res.is_ok(),
             "heartbeat_ack must bypass timestamp check: {res:?}"
@@ -423,7 +472,7 @@ mod tests {
             &Uuid::now_v7().to_string(),
             Utc::now().timestamp(),
         );
-        let res = verify_command(&db, &cmd, &verify_key_bytes, agent_id).await;
+        let res = verify_command(&db, &cmd, &[verify_key_bytes], agent_id).await;
         assert!(res.is_err(), "wrong-key signature must reject");
         let msg = format!("{:#}", res.unwrap_err());
         assert!(
@@ -445,7 +494,7 @@ mod tests {
             &Uuid::now_v7().to_string(),
             Utc::now().timestamp(),
         );
-        let res = verify_command(&db, &cmd, &verify_key_bytes, our_agent_id).await;
+        let res = verify_command(&db, &cmd, &[verify_key_bytes], our_agent_id).await;
         assert!(
             res.is_err(),
             "command addressed to a different agent must reject"

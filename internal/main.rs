@@ -472,7 +472,7 @@ async fn heartbeat_handler(
     let verified = auth::verify_command(
         &state.db,
         &signed,
-        &state.config.dashboard_verify_key,
+        &state.config.dashboard_verify_keys,
         state.config.agent_id,
     )
     .await;
@@ -576,7 +576,7 @@ mod tests {
             database_url: String::new(),
             agent_id: Uuid::now_v7(),
             version: "test".into(),
-            dashboard_verify_key: [0u8; 32],
+            dashboard_verify_keys: Zeroizing::new(Vec::new()),
             internal_token: Zeroizing::new(String::new()),
             listen_addr: "127.0.0.1:0".into(),
             dashboard_url: None,
