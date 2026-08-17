@@ -939,7 +939,9 @@ mod tests {
             ),
             Err(AgentError::Lockdown) => panic!("expected Forbidden; got Lockdown"),
             Err(AgentError::Unauthorized) => panic!("expected Forbidden; got Unauthorized"),
-            other => panic!("expected Forbidden(\"container.deploy compose rejected\"); got {other:?}"),
+            other => {
+                panic!("expected Forbidden(\"container.deploy compose rejected\"); got {other:?}")
+            }
         }
     }
 }
