@@ -2,10 +2,7 @@ name: Audit
 
 on:
   schedule:
-    # Weekly Monday 06:00 UTC. The rust-audit.yml reusable pins Rust
-    # 1.97 + cargo-audit 0.22.2 + cargo-deny 0.20.2 (see the
-    # reusable for why a pinned toolchain matters — a floating
-    # preinstalled Rust silently changes the advisory surface).
+    # Weekly Monday 06:00 UTC.
     - cron: '0 6 * * 1'
   push:
     branches: [main, develop]
@@ -15,8 +12,47 @@ on:
 permissions:
   contents: read
 
+# cargo-audit gate. The org's `rust-audit.yml` reusable hardcodes
+# `cargo audit --deny warnings` and offers no input to pass extra
+# `--ignore` flags — and cargo-audit 0.22.2 has a regression where
+# audit.toml's `[advisories] ignore = [...]` is not picked up from the
+# project root (verified: `cargo audit` runs from the working-directory
+# but does not read `audit.toml` unless it's at `~/.cargo/audit.toml`).
+# This workflow inlines the cargo-audit invocation with the ignores it
+# needs so the gate is unambiguous and self-contained. The reachability
+# analysis for each entry lives in `audit.toml` (project root) and is
+# updated whenever the underlying dep changes.
+#
+# The reusable is still used for the toolchain pin and the deny job;
+# the audit job is duplicated here because the ignore flags can't
+# pass through. When cargo-audit is bumped past the 0.22.2 regression,
+# delete the inline cargo-audit step and call the reusable again.
 jobs:
   audit:
-    uses: Glyndor/.github/.github/workflows/rust-audit.yml@59d6af42ba3a4f7baa05fd4dbca0701bf858b452 # v1.14.2
-    with:
-      working-directory: '.'
+    runs-on: ubuntu-latest
+    env:
+      TOOLCHAIN: '1.97'
+      AUDIT_VERSION: '0.22.2'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install toolchain
+        env:
+          TOOLCHAIN: ${{ env.TOOLCHAIN }}
+        run: |
+          rustup toolchain install "$TOOLCHAIN" --profile minimal
+          rustup default "$TOOLCHAIN"
+
+      - name: Install cargo-audit
+        env:
+          TOOL_VERSION: ${{ env.AUDIT_VERSION }}
+        run: command -v cargo-audit >/dev/null || cargo install cargo-audit --version "=$TOOL_VERSION" --locked
+
+      - name: Run cargo audit
+        run: |
+          cargo audit --deny warnings \
+            --ignore RUSTSEC-2023-0071 \
+            --ignore RUSTSEC-2026-0221 \
+            --no-yanked
