@@ -70,9 +70,7 @@ fn collect_container_stats() -> Vec<ContainerStat> {
 /// Mirrors the helper-extraction pattern in `internal/update/mod.rs`
 /// (`run_startup_health_check` takes a `health_check: F`) — the public
 /// `sample_containers()` API is unchanged.
-fn collect_container_stats_with<F: FnOnce() -> Option<Vec<u8>>>(
-    runner: F,
-) -> Vec<ContainerStat> {
+fn collect_container_stats_with<F: FnOnce() -> Option<Vec<u8>>>(runner: F) -> Vec<ContainerStat> {
     let out = match runner() {
         Some(o) => o,
         None => return vec![],
@@ -484,7 +482,10 @@ mod tests {
     #[tokio::test]
     async fn sample_system_disk_total_gb_positive_for_root() {
         let m = sample_system().await.expect("sample_system must Ok");
-        assert!(m.disk_total_gb > 0.0, "statvfs(\"/\") must report positive total");
+        assert!(
+            m.disk_total_gb > 0.0,
+            "statvfs(\"/\") must report positive total"
+        );
         assert!(m.disk_used_gb >= 0.0, "disk_used_gb must be non-negative");
         assert!(m.disk_used_gb <= m.disk_total_gb);
     }
