@@ -18,12 +18,10 @@ jobs:
     # format is `@<sha> # vX.Y.Z`.
     uses: Glyndor/.github/.github/workflows/rust-ci.yml@59d6af42ba3a4f7baa05fd4dbca0701bf858b452 # v1.14.2
     with:
-      # Coverage ratchet (measured 2026-08-17 on develop: 61.30%
-      # lines / 69.60% functions / 63.40% regions after the pure-
-      # logic test round for error.rs, cert.rs, metrics/mod.rs,
-      # handlers/nftables.rs, handlers/containers.rs — five PRs,
-      # +11.5pp combined, all mutation-verified per
-      # standards/testing/index.md). Threshold 59 leaves 2.3pp
-      # of margin under the measured value. The threshold raises
-      # in the same PR that raises the coverage — never silently.
-      coverage-threshold: 59
+      # Coverage ratchet (measured 2026-08-17 on develop: 66.04%
+      # lines / 72.64% functions / 67.77% regions after adding
+      # handlers/metrics.rs (0% → 89.42%) and nftables/divergence.rs
+      # (0% → 88.24%) tests). Threshold 63 leaves ~3pp of margin
+      # under the measured value. The threshold raises in the
+      # same PR that raises the coverage — never silently.
+      coverage-threshold: 63
