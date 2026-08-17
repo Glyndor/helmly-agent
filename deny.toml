@@ -1,0 +1,64 @@
+# cargo-deny configuration for helmly-agent.
+#
+# Mirrors the configuration podup and epistle use; this is the
+# "production" version per the org's existing patterns (cargo-audit
+# is run separately, via .github/workflows/audit.yml).
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+# No ignores today. RUSTSEC-2023-0071 (rsa) is no longer reachable —
+# the event-listener bump in #124 removed the last sqlx-mysql path.
+# If rsa returns via a future sqlx feature, document the reachability
+# argument here (mirror of audit.toml).
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+# Every license currently in the helmly-agent dep tree (verified
+# 2026-08-17 against the develop lockfile). Adding a crate with
+# a new license requires a deliberate review.
+allow = [
+	"Apache-2.0",
+	"Apache-2.0 WITH LLVM-exception",
+	"MIT",
+	"MIT-0",
+	"0BSD",
+	"BSD-1-Clause",
+	"BSD-3-Clause",
+	"BSL-1.0",
+	"ISC",
+	"Unicode-3.0",
+	"Unlicense",
+	"Zlib",
+	"CC0-1.0",
+	"CDLA-Permissive-2.0",
+]
+
+[bans]
+# Warn (not deny) on duplicate crate versions: the only duplicates
+# today come from Windows-target feature gates and dev-only
+# dependencies. None of them reach the Linux production binary;
+# investigate each warning before denying.
+multiple-versions = "warn"
+# Wildcard version requirements: warn (not deny). The agent's single
+# git dep (`podup`, pinned to a tag, #94 tracks the bump to crates.io)
+# is tagged-pinned but cargo-deny flags git deps as wildcard. The
+# dep is explicit — the tag is the version. Re-enable `wildcards =
+# "deny"` once `podup` is on crates.io. Until then, the gate
+# already catches every other wildcard requirement.
+wildcards = "warn"
+allow-wildcard-paths = true
+highlight = "all"
+
+[sources]
+# Crates from crates.io, plus one org-internal git source: `podup`
+# is the compose-translator library the agent depends on (#94
+# tracks the version bump; owner territory). Until podup publishes
+# to crates.io, the git source stays.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = ["https://github.com/Glyndor/podup"]
