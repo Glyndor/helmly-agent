@@ -592,7 +592,6 @@ log_ok "$HELMLY_DIR"
 log_section "Downloading helmly-agent binary"
 
 GITHUB_REPO="Glyndor/helmly-agent"
-RELEASE_VERIFY_KEY_B64="HFv7vg5FCY7YyKUDbJhaQSfB9SboJGSblJtFbLmLHzM="
 
 _ARCH=$(uname -m)
 case "$_ARCH" in
@@ -650,21 +649,56 @@ chmod 755 "$BIN_DIR"
 
 _verify_release_sig() {
     local file="$1" sig_file="$2"
-    python3 - "$RELEASE_VERIFY_KEY_B64" "$file" "$sig_file" <<'PYEOF'
+    python3 - "$file" "$sig_file" <<'PYEOF'
 import sys, base64
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-pub_key = Ed25519PublicKey.from_public_bytes(base64.b64decode(sys.argv[1] + "=="))
+# C2: dual-slot release verify pubkey, mirroring `podup`'s
+# `RELEASE_PUBKEYS` two-slot pattern (`standards/releases/index.md:52-58`).
+# Slot 0 is the active signing key; slot 1 carries the next key during a
+# two-phase rotation, or is empty when no rotation is in flight.
+# The release.yml pin check at `.github/workflows/release.yml:107-111`
+# greps these literals to assert the Rust const, the install-script
+# constant, and the update-script constant all agree.
+PUB_KEYS_B64 = [
+    # Slot 0: GLYNDOR_RELEASE_ED25519_KEY
+    "HFv7vg5FCY7YyKUDbJhaQSfB9SboJGSblJtFbLmLHzM=",
+    # Slot 1: empty (no rotation in flight).
+    "",
+]
 
-with open(sys.argv[2], "rb") as f:
+with open(sys.argv[1], "rb") as f:
     data = f.read()
-with open(sys.argv[3], "rb") as f:
+with open(sys.argv[2], "rb") as f:
     sig = f.read()
-try:
-    pub_key.verify(sig, data)
-except Exception as e:
+
+# Iterate non-empty slots; first match wins; if none, fail closed.
+errors = []
+matched = False
+for i, slot_b64 in enumerate(PUB_KEYS_B64):
+    if not slot_b64:
+        # Empty slot = no rotation in flight. Skip.
+        continue
+    try:
+        key = Ed25519PublicKey.from_public_bytes(base64.b64decode(slot_b64 + "=="))
+    except Exception as e:
+        errors.append(f"slot {i} key invalid: {e}")
+        continue
+    try:
+        key.verify(sig, data)
+    except Exception as e:
+        errors.append(f"slot {i} did not verify: {e}")
+        continue
+    matched = True
+    break
+
+if matched:
+    sys.exit(0)
+
+for e in errors:
     print(f"signature invalid: {e}", file=sys.stderr)
-    sys.exit(1)
+print("signature did not verify against any non-empty slot of PUB_KEYS_B64", file=sys.stderr)
+sys.exit(1)
 PYEOF
 }
 

@@ -161,28 +161,80 @@ async fn download_bytes(client: &reqwest::Client, url: &str) -> Result<Vec<u8>> 
     Ok(bytes.to_vec())
 }
 
-fn verify_signature(binary: &[u8], sig_bytes: &[u8]) -> Result<()> {
-    let key_bytes = load_verify_key()?;
-    let key = VerifyingKey::from_bytes(&key_bytes).context("parse DASHBOARD_VERIFY_KEY")?;
+/// C2: two-slot release verify pubkey, mirroring `podup`'s `RELEASE_PUBKEYS`
+/// (`standards/releases/index.md:52-58`). Slot 0 is the active signing
+/// key; slot 1 carries the next key during a two-phase rotation, or is
+/// all-zero when no rotation is in flight. A zeroed slot is skipped
+/// during verify; if both slots are zeroed the verify fails closed.
+///
+/// Slot 1 must be `GLYNDOR_RELEASE_ED25519_KEY`'s predecessor or successor
+/// at the moment of the release. Operators: the new key goes in slot 1
+/// of the *next* release; after telemetry confirms every agent holds it,
+/// the *next-next* release swaps slot 0 to the new key and zeroes slot 1.
+pub(crate) const RELEASE_PUBKEYS: &[[u8; 32]; 2] = &[
+    // Slot 0: GLYNDOR_RELEASE_ED25519_KEY = HFv7vg5FCY7YyKUDbJhaQSfB9SboJGSblJtFbLmLHzM=
+    // (kept in sync with `RELEASE_VERIFY_KEY_B64` below via the release.yml
+    // pin check at `.github/workflows/release.yml:107-111`.)
+    [
+        0x1c, 0x5b, 0xfb, 0xbe, 0x0e, 0x45, 0x09, 0x8e, 0xd8, 0xc8, 0xa5, 0x03, 0x6c, 0x98, 0x5a,
+        0x41, 0x27, 0xc1, 0xf5, 0x26, 0xe8, 0x24, 0x64, 0x9b, 0x94, 0x9b, 0x45, 0x6c, 0xb9, 0x8b, 0x1f, 0x33,
+    ],
+    // Slot 1: empty (no rotation in flight).
+    [0u8; 32],
+];
 
+/// Reference for the release.yml pin-check (`.github/workflows/
+/// release.yml:107-111` greps the b64 literal in setup-agent.sh,
+/// update-agent.sh, and this file to assert the three agree). The
+/// actual verification path uses `RELEASE_PUBKEYS` above.
+#[allow(dead_code)]
+pub(crate) const RELEASE_VERIFY_KEY_B64: &str =
+    "HFv7vg5FCY7YyKUDbJhaQSfB9SboJGSblJtFbLmLHzM=";
+
+/// Iterate non-zeroed pubkey slots in `keyring` and accept the first
+/// one that verifies. Zeroed slots are skipped. If none verify, fail
+/// closed. `verify_signature` calls this with the embedded
+/// `RELEASE_PUBKEYS`; tests call it with synthetic keys.
+fn verify_signature_with(binary: &[u8], sig_bytes: &[u8], keyring: &[[u8; 32]]) -> Result<()> {
     let sig_arr: [u8; 64] = sig_bytes
         .try_into()
         .map_err(|_| anyhow::anyhow!("signature must be 64 bytes, got {}", sig_bytes.len()))?;
     let sig = Signature::from_bytes(&sig_arr);
 
-    key.verify(binary, &sig)
-        .context("Ed25519 signature invalid")
+    let mut last_err: Option<anyhow::Error> = None;
+    let mut matched = false;
+    for (i, slot) in keyring.iter().enumerate() {
+        if slot == &[0u8; 32] {
+            continue;
+        }
+        let key = match VerifyingKey::from_bytes(slot) {
+            Ok(k) => k,
+            Err(e) => {
+                last_err = Some(anyhow::anyhow!("keyring slot {i} invalid: {e}"));
+                continue;
+            }
+        };
+        if key.verify(binary, &sig).is_ok() {
+            matched = true;
+            break;
+        }
+        last_err = Some(anyhow::anyhow!(
+            "release signature did not verify against slot {i}"
+        ));
+    }
+    if matched {
+        Ok(())
+    } else {
+        Err(last_err.unwrap_or_else(|| {
+            anyhow::anyhow!(
+                "release signature did not verify against any non-zeroed slot"
+            )
+        }))
+    }
 }
 
-const RELEASE_VERIFY_KEY_B64: &str = "HFv7vg5FCY7YyKUDbJhaQSfB9SboJGSblJtFbLmLHzM=";
-
-fn load_verify_key() -> Result<[u8; 32]> {
-    use base64ct::{Base64, Encoding};
-    let bytes = Base64::decode_vec(RELEASE_VERIFY_KEY_B64)
-        .context("decode hardcoded release verify key")?;
-    bytes
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("release verify key must be 32 bytes"))
+fn verify_signature(binary: &[u8], sig_bytes: &[u8]) -> Result<()> {
+    verify_signature_with(binary, sig_bytes, RELEASE_PUBKEYS)
 }
 
 fn validate_github_url(url: &str) -> Result<()> {
@@ -249,5 +301,114 @@ fn is_private_ip(ip: std::net::IpAddr) -> bool {
                 || (v6.segments()[0] & 0xfe00) == 0xfc00  // fc00::/7 ULA
                 || (v6.segments()[0] & 0xffc0) == 0xfe80 // fe80::/10 link-local
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::verify_signature_with;
+
+    /// C2: regression — any non-zeroed slot in the keyring verifies its
+    /// own signature. Today's behaviour, one active key.
+    #[test]
+    fn release_verify_accepts_any_non_zeroed_slot() {
+        use ed25519_dalek::Signer;
+        let signing = ed25519_dalek::SigningKey::from_bytes(&[0x42u8; 32]);
+        let pub_key = signing.verifying_key().to_bytes();
+        let binary = b"helmly-agent binary";
+        let sig = signing.sign(binary);
+        let keyring = [[0u8; 32], pub_key];
+        assert!(
+            verify_signature_with(binary, &sig.to_bytes(), &keyring).is_ok(),
+            "any non-zeroed slot that matches must verify"
+        );
+    }
+
+    /// C2: regression — two-phase rotation. The OLD key continues to
+    /// verify on agents that already hold `[OLD, NEW]` (slot 1 just added
+    /// for the new key).
+    #[test]
+    fn release_verify_old_key_works_after_new_key_added() {
+        use ed25519_dalek::Signer;
+        let old = ed25519_dalek::SigningKey::from_bytes(&[0x11u8; 32]);
+        let new = ed25519_dalek::SigningKey::from_bytes(&[0x22u8; 32]);
+        let binary = b"transition release signed by old";
+        let sig = old.sign(binary);
+        let keyring = [old.verifying_key().to_bytes(), new.verifying_key().to_bytes()];
+        assert!(
+            verify_signature_with(binary, &sig.to_bytes(), &keyring).is_ok(),
+            "transition release signed by OLD must verify against the [OLD,NEW] ring"
+        );
+    }
+
+    /// C2: regression — the NEW key verifies against the [OLD,NEW] ring.
+    /// (The cut-over to `[NEW, ZERO]` ships in the *next* release; this
+    /// test exercises the mid-rotation state.)
+    #[test]
+    fn release_verify_new_key_works_in_two_slot_ring() {
+        use ed25519_dalek::Signer;
+        let old = ed25519_dalek::SigningKey::from_bytes(&[0x11u8; 32]);
+        let new = ed25519_dalek::SigningKey::from_bytes(&[0x22u8; 32]);
+        let binary = b"transition release signed by new";
+        let sig = new.sign(binary);
+        let keyring = [old.verifying_key().to_bytes(), new.verifying_key().to_bytes()];
+        assert!(
+            verify_signature_with(binary, &sig.to_bytes(), &keyring).is_ok(),
+            "transition release signed by NEW must verify against the [OLD,NEW] ring"
+        );
+    }
+
+    /// C2: regression — cut-over. After Phase 2, slot 0 is the new
+    /// key and slot 1 is zeroed. A release signed by the OLD key no
+    /// longer verifies (operator has retired OLD).
+    #[test]
+    fn release_verify_old_key_rejected_after_cutover() {
+        use ed25519_dalek::Signer;
+        let old = ed25519_dalek::SigningKey::from_bytes(&[0x11u8; 32]);
+        let new = ed25519_dalek::SigningKey::from_bytes(&[0x22u8; 32]);
+        let binary = b"forged release signed by retired OLD";
+        let sig = old.sign(binary);
+        let keyring = [new.verifying_key().to_bytes(), [0u8; 32]];
+        let r = verify_signature_with(binary, &sig.to_bytes(), &keyring);
+        let err = r.expect_err("OLD key after cut-over must fail; got Ok");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("did not verify against slot 0")
+                || msg.contains("no non-zeroed slot"),
+            "rejection must name the cause; got: {msg}"
+        );
+    }
+
+    /// C2: regression — a forged signature (made by a key that's never
+    /// been in the ring) is rejected, even if the ring has both slots
+    /// populated. Fail closed.
+    #[test]
+    fn release_verify_rejects_forged_signature() {
+        use ed25519_dalek::Signer;
+        let old = ed25519_dalek::SigningKey::from_bytes(&[0x11u8; 32]);
+        let new = ed25519_dalek::SigningKey::from_bytes(&[0x22u8; 32]);
+        let attacker = ed25519_dalek::SigningKey::from_bytes(&[0x33u8; 32]);
+        let binary = b"binary";
+        let sig = attacker.sign(binary);
+        let keyring = [old.verifying_key().to_bytes(), new.verifying_key().to_bytes()];
+        assert!(
+            verify_signature_with(binary, &sig.to_bytes(), &keyring).is_err(),
+            "forged signature must fail closed"
+        );
+    }
+
+    /// C2: regression — an empty keyring (both slots zeroed) fails
+    /// closed. Removing the iteration entirely (i.e. always returning
+    /// Ok) makes this go red.
+    #[test]
+    fn release_verify_rejects_when_keyring_all_zeroed() {
+        let keyring = [[0u8; 32], [0u8; 32]];
+        let r = verify_signature_with(b"binary", &[0u8; 64], &keyring);
+        let err = r.expect_err("zeroed keyring must fail; got Ok");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("any non-zeroed slot"),
+            "rejection must name the cause; got: {msg}"
+        );
     }
 }
