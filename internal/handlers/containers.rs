@@ -351,11 +351,10 @@ mod tests {
         // the error must NOT be `Forbidden`. Adding
         // `if permission == Read { Err(Forbidden) }` here would surface
         // as `Forbidden(_)` and this test fails.
-        match handle_container_list(&cmd) {
-            Err(AgentError::Forbidden(msg)) => panic!(
+        if let Err(AgentError::Forbidden(msg)) = handle_container_list(&cmd) {
+            panic!(
                 "container.list has no permission gate; Read must pass through; got Forbidden({msg})"
-            ),
-            _ => {} // Ok or any non-Forbidden error is acceptable
+            )
         }
     }
 
