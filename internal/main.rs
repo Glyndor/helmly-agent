@@ -104,7 +104,9 @@ pub(crate) fn build_tls_acceptor(
         .with_single_cert(cert_chain, key)
         .map_err(|e| anyhow::anyhow!("TLS ServerConfig build failed: {e}"))?;
 
-    Ok(Some(tokio_rustls::TlsAcceptor::from(StdArc::new(server_config))))
+    Ok(Some(tokio_rustls::TlsAcceptor::from(StdArc::new(
+        server_config,
+    ))))
 }
 
 async fn serve_tls(
@@ -453,9 +455,7 @@ async fn main() -> anyhow::Result<()> {
             serve_tls(listener, app, acceptor).await?;
         }
         None => {
-            info!(
-                "helmly-agent listening on {listen_addr} (plain HTTP — INSECURE_PLAIN_HTTP=1)"
-            );
+            info!("helmly-agent listening on {listen_addr} (plain HTTP — INSECURE_PLAIN_HTTP=1)");
             axum::serve(listener, app).await?;
         }
     }
