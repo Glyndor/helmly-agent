@@ -12,29 +12,27 @@ on:
 permissions:
   contents: read
 
-# cargo-audit gate. Inlined rather than calling the org's
-# `rust-audit.yml` reusable, because the reusable offers no input
-# to pass extra `--ignore` flags and hardcodes `cargo audit --deny
-# warnings` — and cargo-audit 0.22.2 has a regression where
-# audit.toml's `[advisories] ignore = [...]` is not picked up from
-# the project root (verified: `cargo audit` runs from the working-
-# directory but does not read `audit.toml` unless it's at
-# `~/.cargo/audit.toml`). This workflow inlines the cargo-audit
-# invocation with the ignores + the toolchain pin so the gate is
-# unambiguous and self-contained. The reachability analysis for
-# each entry lives in `audit.toml` (project root) and is updated
-# whenever the underlying dep changes.
-#
-# When cargo-audit is bumped past the 0.22.2 regression, delete
-# the inline cargo-audit step and call the reusable again. The
-# reusable's `deny` job (cargo-deny) is not enabled here — see
-# the cargo-deny PR that introduces a `deny.toml` for the policy.
+# cargo-audit + cargo-deny gates, inlined. The org's
+# `rust-audit.yml` reusable offers no input to pass extra `--ignore`
+# flags and hardcodes `cargo audit --deny warnings` — and
+# cargo-audit 0.22.2 has a regression where audit.toml's
+# `[advisories] ignore = [...]` is not picked up from the project
+# root (verified: `cargo audit` runs from the working-directory but
+# does not read `./audit.toml` unless it's at `~/.cargo/audit.toml`).
+# This workflow inlines both cargo-audit and cargo-deny with the
+# toolchain pinned (so a floating preinstalled Rust can't silently
+# change the advisory surface). Reachability analysis for each
+# ignore lives in `audit.toml` (project root); license policy in
+# `deny.toml`. When cargo-audit is bumped past the 0.22.2 regression,
+# delete the inlined cargo-audit step and call the reusable again.
+
 jobs:
   audit:
     runs-on: ubuntu-latest
     env:
       TOOLCHAIN: '1.97'
       AUDIT_VERSION: '0.22.2'
+      DENY_VERSION: '0.20.2'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -52,14 +50,18 @@ jobs:
           TOOL_VERSION: ${{ env.AUDIT_VERSION }}
         run: command -v cargo-audit >/dev/null || cargo install cargo-audit --version "=$TOOL_VERSION" --locked
 
+      - name: Install cargo-deny
+        env:
+          TOOL_VERSION: ${{ env.DENY_VERSION }}
+        run: command -v cargo-deny >/dev/null || cargo install cargo-deny --version "=$TOOL_VERSION" --locked
+
       - name: Run cargo audit
         # `--deny warnings` covers vulnerabilities + soundness +
         # unmaintained + unsound + yanked — every advisory class. We
         # ignore only what's documented in `audit.toml` with a measured
         # reachability argument. Do not add `--no-yanked`: that flag
-        # silently turns off half the gate (yanked crates can be
-        # exploitable transitively or pin down a security surface
-        # that should fail closed).
-        run: |
-          cargo audit --deny warnings \
-            --ignore RUSTSEC-2023-0071
+        # silently turns off half the gate.
+        run: cargo audit --deny warnings --ignore RUSTSEC-2023-0071
+
+      - name: Run cargo deny
+        run: cargo deny check

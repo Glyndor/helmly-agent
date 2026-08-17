@@ -2,6 +2,7 @@
 name = "helmly-agent"
 version = "1.4.1"
 edition = "2021"
+license = "MIT"
 
 [[bin]]
 name = "helmly-agent"
