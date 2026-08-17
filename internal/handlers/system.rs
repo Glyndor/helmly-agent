@@ -446,8 +446,8 @@ pub(crate) async fn validate_migrate_target(
 ) -> std::result::Result<(), String> {
     use std::net::IpAddr;
 
-    let parsed_target = url::Url::parse(target_url)
-        .map_err(|e| format!("target_url is not a valid URL: {e}"))?;
+    let parsed_target =
+        url::Url::parse(target_url).map_err(|e| format!("target_url is not a valid URL: {e}"))?;
     let parsed_dash = url::Url::parse(dashboard_url)
         .map_err(|e| format!("DASHBOARD_URL is not a valid URL: {e}"))?;
 
@@ -515,9 +515,7 @@ pub(crate) async fn validate_migrate_target(
         .map_err(|e| format!("DNS lookup of {target_host} failed: {e}"))?;
     let addrs: Vec<std::net::SocketAddr> = lookup.collect();
     if addrs.is_empty() {
-        return Err(format!(
-            "DNS lookup of {target_host} returned no addresses"
-        ));
+        return Err(format!("DNS lookup of {target_host} returned no addresses"));
     }
     for addr in addrs.iter().take(16) {
         let ip: IpAddr = addr.ip();
@@ -629,11 +627,7 @@ mod tests {
     /// C5: a target_url with a non-http(s) scheme fails.
     #[tokio::test]
     async fn migrate_target_bad_scheme_returns_err() {
-        let r = validate_migrate_target(
-            "file:///etc/passwd",
-            "https://dashboard.example",
-        )
-        .await;
+        let r = validate_migrate_target("file:///etc/passwd", "https://dashboard.example").await;
         let err = r.expect_err("file:// must error; got Ok");
         assert!(
             err.contains("scheme"),
