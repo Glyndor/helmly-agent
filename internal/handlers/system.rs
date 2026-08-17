@@ -68,7 +68,7 @@ pub async fn run_verified_command(
     let verified = match verify_command(
         &state.db,
         &signed,
-        &state.config.dashboard_verify_key,
+        &state.config.dashboard_verify_keys,
         state.config.agent_id,
     )
     .await
