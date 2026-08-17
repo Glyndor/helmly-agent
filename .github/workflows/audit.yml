@@ -12,21 +12,23 @@ on:
 permissions:
   contents: read
 
-# cargo-audit gate. The org's `rust-audit.yml` reusable hardcodes
-# `cargo audit --deny warnings` and offers no input to pass extra
-# `--ignore` flags — and cargo-audit 0.22.2 has a regression where
-# audit.toml's `[advisories] ignore = [...]` is not picked up from the
-# project root (verified: `cargo audit` runs from the working-directory
-# but does not read `audit.toml` unless it's at `~/.cargo/audit.toml`).
-# This workflow inlines the cargo-audit invocation with the ignores it
-# needs so the gate is unambiguous and self-contained. The reachability
-# analysis for each entry lives in `audit.toml` (project root) and is
-# updated whenever the underlying dep changes.
+# cargo-audit gate. Inlined rather than calling the org's
+# `rust-audit.yml` reusable, because the reusable offers no input
+# to pass extra `--ignore` flags and hardcodes `cargo audit --deny
+# warnings` — and cargo-audit 0.22.2 has a regression where
+# audit.toml's `[advisories] ignore = [...]` is not picked up from
+# the project root (verified: `cargo audit` runs from the working-
+# directory but does not read `audit.toml` unless it's at
+# `~/.cargo/audit.toml`). This workflow inlines the cargo-audit
+# invocation with the ignores + the toolchain pin so the gate is
+# unambiguous and self-contained. The reachability analysis for
+# each entry lives in `audit.toml` (project root) and is updated
+# whenever the underlying dep changes.
 #
-# The reusable is still used for the toolchain pin and the deny job;
-# the audit job is duplicated here because the ignore flags can't
-# pass through. When cargo-audit is bumped past the 0.22.2 regression,
-# delete the inline cargo-audit step and call the reusable again.
+# When cargo-audit is bumped past the 0.22.2 regression, delete
+# the inline cargo-audit step and call the reusable again. The
+# reusable's `deny` job (cargo-deny) is not enabled here — see
+# the cargo-deny PR that introduces a `deny.toml` for the policy.
 jobs:
   audit:
     runs-on: ubuntu-latest
@@ -51,8 +53,13 @@ jobs:
         run: command -v cargo-audit >/dev/null || cargo install cargo-audit --version "=$TOOL_VERSION" --locked
 
       - name: Run cargo audit
+        # `--deny warnings` covers vulnerabilities + soundness +
+        # unmaintained + unsound + yanked — every advisory class. We
+        # ignore only what's documented in `audit.toml` with a measured
+        # reachability argument. Do not add `--no-yanked`: that flag
+        # silently turns off half the gate (yanked crates can be
+        # exploitable transitively or pin down a security surface
+        # that should fail closed).
         run: |
           cargo audit --deny warnings \
-            --ignore RUSTSEC-2023-0071 \
-            --ignore RUSTSEC-2026-0221 \
-            --no-yanked
+            --ignore RUSTSEC-2023-0071
