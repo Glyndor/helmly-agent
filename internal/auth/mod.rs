@@ -96,9 +96,7 @@ pub async fn verify_command(
             Err(e) => {
                 // A bad key in the ring shouldn't happen (loader validates),
                 // but treat it as fail-closed — surface the error.
-                last_err = Some(anyhow::anyhow!(
-                    "keyring slot {i} is malformed: {e}"
-                ));
+                last_err = Some(anyhow::anyhow!("keyring slot {i} is malformed: {e}"));
                 continue;
             }
         };
@@ -117,9 +115,9 @@ pub async fn verify_command(
     if !matched {
         // None of the keys in the ring verified; surface the last concrete
         // error to the caller for diagnostics.
-        return Err(last_err.unwrap_or_else(|| {
-            anyhow::anyhow!("no key in ring verified the signature")
-        }));
+        return Err(
+            last_err.unwrap_or_else(|| anyhow::anyhow!("no key in ring verified the signature"))
+        );
     }
 
     // 3. Parse payload

@@ -137,67 +137,64 @@ fn load_der_file_zeroize_opt(env: &str) -> Option<Zeroizing<Vec<u8>>> {
 /// is set but the file is absent, write the file atomically (mode
 /// 0o600, `O_EXCL`) so the next start reads the ring instead.
 fn load_dashboard_keyring() -> Result<Zeroizing<Vec<[u8; 32]>>> {
-        // 1. File path first.
-        let path = std::path::Path::new(DASHBOARD_KEYRING_PATH);
-        if path.exists() {
-            // Refuse to load if perms are wider than 0o600 — the audit
-            // calls this out as M17 (secrets-at-rest). `metadata` can fail
-            // on some filesystems; treat that as "skip file" so the legacy
-            // env path picks up.
-            if let Ok(meta) = std::fs::metadata(path) {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let mode = meta.permissions().mode() & 0o777;
-                    if mode & 0o077 != 0 {
-                        anyhow::bail!(
-                            "{DASHBOARD_KEYRING_PATH} is world- or group-readable \
+    // 1. File path first.
+    let path = std::path::Path::new(DASHBOARD_KEYRING_PATH);
+    if path.exists() {
+        // Refuse to load if perms are wider than 0o600 — the audit
+        // calls this out as M17 (secrets-at-rest). `metadata` can fail
+        // on some filesystems; treat that as "skip file" so the legacy
+        // env path picks up.
+        if let Ok(meta) = std::fs::metadata(path) {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = meta.permissions().mode() & 0o777;
+                if mode & 0o077 != 0 {
+                    anyhow::bail!(
+                        "{DASHBOARD_KEYRING_PATH} is world- or group-readable \
                              (mode {mode:o}); refusing to load. chmod 600 the file \
                              and restart."
-                        );
-                    }
+                    );
                 }
             }
-            let raw = std::fs::read_to_string(path)
-                .with_context(|| format!("read {DASHBOARD_KEYRING_PATH}"))?;
-            let mut ring = Zeroizing::new(Vec::with_capacity(2));
-            for (idx, line) in raw.lines().enumerate() {
-                let trimmed = line.trim();
-                if trimmed.is_empty() || trimmed.starts_with('#') {
-                    continue;
-                }
-                let bytes = Base64::decode_vec(trimmed)
-                    .with_context(|| format!("{DASHBOARD_KEYRING_PATH}:{idx} not base64"))?;
-                let arr: [u8; 32] = bytes
-                    .as_slice()
-                    .try_into()
-                    .map_err(|_| {
-                        anyhow::anyhow!(
-                            "{DASHBOARD_KEYRING_PATH}:{idx} must decode to exactly 32 bytes, got {}",
-                            bytes.len()
-                        )
-                    })?;
-                ring.push(arr);
+        }
+        let raw = std::fs::read_to_string(path)
+            .with_context(|| format!("read {DASHBOARD_KEYRING_PATH}"))?;
+        let mut ring = Zeroizing::new(Vec::with_capacity(2));
+        for (idx, line) in raw.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
             }
-            return Ok(ring);
+            let bytes = Base64::decode_vec(trimmed)
+                .with_context(|| format!("{DASHBOARD_KEYRING_PATH}:{idx} not base64"))?;
+            let arr: [u8; 32] = bytes.as_slice().try_into().map_err(|_| {
+                anyhow::anyhow!(
+                    "{DASHBOARD_KEYRING_PATH}:{idx} must decode to exactly 32 bytes, got {}",
+                    bytes.len()
+                )
+            })?;
+            ring.push(arr);
         }
-
-        // 2. Legacy env (single-key).
-        if let Some(bytes) = load_key32_opt("DASHBOARD_VERIFY_KEY") {
-            // Seed-on-load: write the file atomically so the next start
-            // reads the ring instead of the env. `O_EXCL` prevents clobbering
-            // an existing file; if the file appeared between our `exists()`
-            // and the open we just continue without writing — the next start
-            // reads the file.
-            let mut ring = Zeroizing::new(Vec::with_capacity(1));
-            ring.push(bytes);
-            seed_keyring_file(&bytes).context("seed dashboard-keyring on first boot")?;
-            return Ok(ring);
-        }
-
-        // 3. No source — caller surfaces the user-facing error.
-        Ok(Zeroizing::new(Vec::new()))
+        return Ok(ring);
     }
+
+    // 2. Legacy env (single-key).
+    if let Some(bytes) = load_key32_opt("DASHBOARD_VERIFY_KEY") {
+        // Seed-on-load: write the file atomically so the next start
+        // reads the ring instead of the env. `O_EXCL` prevents clobbering
+        // an existing file; if the file appeared between our `exists()`
+        // and the open we just continue without writing — the next start
+        // reads the file.
+        let mut ring = Zeroizing::new(Vec::with_capacity(1));
+        ring.push(bytes);
+        seed_keyring_file(&bytes).context("seed dashboard-keyring on first boot")?;
+        return Ok(ring);
+    }
+
+    // 3. No source — caller surfaces the user-facing error.
+    Ok(Zeroizing::new(Vec::new()))
+}
 
 fn load_key32_opt(env: &str) -> Option<[u8; 32]> {
     let file_env = format!("{env}_FILE");
