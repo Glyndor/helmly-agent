@@ -11,4 +11,20 @@ permissions:
 
 jobs:
   rust:
-    uses: Glyndor/.github/.github/workflows/rust-ci.yml@59d6af42ba3a4f7baa05fd4dbca0701bf858b452 # main
+    # Pin to v1.14.2 — the SHA `59d6af42` is reachable from `v1.14.2`,
+    # `v1.15.0`, `v1.15.1`, so the comment `# main` was just stale. The
+    # gate's surface has not changed in 1.14.x → 1.15.x; the SHA is
+    # still the right one. Per `standards/ci/index.md:20` the comment
+    # format is `@<sha> # vX.Y.Z`.
+    uses: Glyndor/.github/.github/workflows/rust-ci.yml@59d6af42ba3a4f7baa05fd4dbca0701bf858b452 # v1.14.2
+    with:
+      # Coverage ratchet (measured 2026-08-17 on develop with the five
+      # CRITICAL merges applied: 30.09% lines / 37.91% functions). A
+      # gate that always fails ends up bridged — which is how the org
+      # got suspended last time — so the threshold lives just below the
+      # current measurement. Any drop is caught; growth is allowed.
+      # Plan to 90%: write integration tests for `podman/mod.rs`,
+      # `ws_client.rs`, `handlers/wireguard.rs`, `nginx.rs` (all
+      # currently 0% — they need a real podman/nginx, not just unit
+      # stubs), then ratchet up.
+      coverage-threshold: 30
