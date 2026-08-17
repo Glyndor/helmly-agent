@@ -104,12 +104,7 @@ mod tests {
 
     /// Build a `SignedCert` envelope: serialize `AgentCert` to JSON, sign
     /// the raw bytes with `key`, base64url-encode both halves.
-    fn sign_cert(
-        key: &SigningKey,
-        agent_id: Uuid,
-        issued_at: i64,
-        expires_at: i64,
-    ) -> SignedCert {
+    fn sign_cert(key: &SigningKey, agent_id: Uuid, issued_at: i64, expires_at: i64) -> SignedCert {
         let payload = json!({
             "agent_id": agent_id,
             "issued_at": issued_at,
@@ -160,8 +155,7 @@ mod tests {
         let now = chrono::Utc::now().timestamp();
 
         let signed = sign_cert(&key, agent_id, now - 3600, now - 60);
-        let err = verify(&signed, &ca_public, agent_id)
-            .expect_err("expired cert must reject");
+        let err = verify(&signed, &ca_public, agent_id).expect_err("expired cert must reject");
         let msg = format!("{:#}", err);
         assert!(
             msg.contains("cert expired"),
@@ -181,8 +175,7 @@ mod tests {
         let now = chrono::Utc::now().timestamp();
 
         let signed = sign_cert(&key, signed_for, now, now + 3600);
-        let err = verify(&signed, &ca_public, expected)
-            .expect_err("wrong agent_id must reject");
+        let err = verify(&signed, &ca_public, expected).expect_err("wrong agent_id must reject");
         let msg = format!("{:#}", err);
         assert!(
             msg.contains("agent_id mismatch"),
@@ -244,8 +237,7 @@ mod tests {
             signature: Base64UrlUnpadded::encode_string(&sig.to_bytes()),
         };
 
-        let err = verify(&signed, &ca_public, agent_id)
-            .expect_err("non-JSON payload must reject");
+        let err = verify(&signed, &ca_public, agent_id).expect_err("non-JSON payload must reject");
         let msg = format!("{:#}", err);
         assert!(
             msg.contains("deserialize cert"),
@@ -266,8 +258,8 @@ mod tests {
         // Attacker forges a cert with the right shape and signs it with
         // their own key. The CA key will reject the signature.
         let signed = sign_cert(&attacker_key, agent_id, now, now + 3600);
-        let err = verify(&signed, &ca_public, agent_id)
-            .expect_err("wrong-key signature must reject");
+        let err =
+            verify(&signed, &ca_public, agent_id).expect_err("wrong-key signature must reject");
         let msg = format!("{:#}", err);
         assert!(
             msg.contains("CA signature invalid"),
@@ -287,8 +279,8 @@ mod tests {
             payload: Base64UrlUnpadded::encode_string(b"{\"agent_id\":\"00000000-0000-0000-0000-000000000000\",\"issued_at\":0,\"expires_at\":9999999999}"),
             signature: Base64UrlUnpadded::encode_string(&[0u8; 32]),
         };
-        let err = verify(&signed, &ca_public, agent_id)
-            .expect_err("non-64-byte signature must reject");
+        let err =
+            verify(&signed, &ca_public, agent_id).expect_err("non-64-byte signature must reject");
         let msg = format!("{:#}", err);
         assert!(
             msg.contains("signature must be 64 bytes"),
@@ -313,8 +305,7 @@ mod tests {
         let now = chrono::Utc::now().timestamp();
 
         let signed = sign_cert(&key, agent_id, now, now + 5);
-        verify(&signed, &ca_public, agent_id)
-            .expect("expires_at in the future must verify");
+        verify(&signed, &ca_public, agent_id).expect("expires_at in the future must verify");
     }
 
     /// Boundary contract: the check is strict `now > expires_at`, so
@@ -344,8 +335,8 @@ mod tests {
         let now = chrono::Utc::now().timestamp();
 
         let signed = sign_cert(&key, agent_id, now - 60, now - 5);
-        let err = verify(&signed, &ca_public, agent_id)
-            .expect_err("expires_at in the past must reject");
+        let err =
+            verify(&signed, &ca_public, agent_id).expect_err("expires_at in the past must reject");
         let msg = format!("{:#}", err);
         assert!(
             msg.contains("cert expired"),
@@ -372,10 +363,8 @@ mod tests {
         let signed = sign_cert(&key, agent_id, issued_at, expires_at);
 
         // Decode payload → parse AgentCert.
-        let payload_bytes =
-            Base64UrlUnpadded::decode_vec(&signed.payload).expect("payload base64");
-        let parsed: AgentCert =
-            serde_json::from_slice(&payload_bytes).expect("payload JSON");
+        let payload_bytes = Base64UrlUnpadded::decode_vec(&signed.payload).expect("payload base64");
+        let parsed: AgentCert = serde_json::from_slice(&payload_bytes).expect("payload JSON");
 
         assert_eq!(parsed.agent_id, agent_id);
         assert_eq!(parsed.issued_at, issued_at);
