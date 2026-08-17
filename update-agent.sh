@@ -222,6 +222,13 @@ log_ok "helmly-agent running with new binary"
 
 printf '%s' "$LATEST_VERSION" > "$VERSION_FILE"
 
+# --- Write install-method marker --------------------------------------------
+# Idempotent: same value the initial setup wrote. The in-band self-update
+# path also reads this file (internal/update/mod.rs), so the bash updater
+# and the Rust updater see the same flag.
+printf '%s' 'script' > /etc/glyndor/helmly/.install-method
+chmod 0644 /etc/glyndor/helmly/.install-method
+
 # --- Done -------------------------------------------------------------------
 
 log_section "Update complete"

@@ -132,6 +132,11 @@ _cleanup_existing() {
     rm -rf "$HELMLY_WG_DIR" "$HELMLY_DIR/credentials"
     rm -f  "$AGENT_CONF" "$HELMLY_DIR/agent-id"
     rm -f  "$BIN_DIR/helmly-agent" "$BIN_DIR/helmly-agent.prev" "$BIN_DIR/helmly-agent-version"
+    # Also remove the install-method marker — the cleanup path leaves a fresh
+    # /etc/glyndor/helmly (shared with the dashboard on co-located VPSes) but
+    # the marker is install-specific. Re-installed setups will write it back
+    # at the same point in the script that writes helmly-agent-version.
+    rm -f  "$HELMLY_DIR/.install-method"
     rmdir  "$BIN_DIR" "$HELMLY_DIR" 2>/dev/null || true
 
     if [[ -n "$_SAVED_DASH_SIGN_PUBKEY" ]]; then
@@ -891,6 +896,14 @@ PG_PASS="$("$BINARY_PATH" gen-rand 32)"
 # Agent binary already downloaded earlier — version file gets written below.
 printf '%s' "${LATEST_AGENT_TAG#v}" > "$BIN_DIR/helmly-agent-version"
 log_ok "Version: ${LATEST_AGENT_TAG#v}"
+
+# --- Write install-method marker -------------------------------------------
+# Tells the in-band self-update that this install is script-managed, not
+# dpkg-managed. A future helmly-agent.deb postinst writes "dpkg" instead.
+# Read by internal/update/mod.rs::check_install_method_marker_at.
+printf '%s' 'script' > /etc/glyndor/helmly/.install-method
+chmod 0644 /etc/glyndor/helmly/.install-method
+log_ok "Install-method marker: script (this install is managed by setup-agent.sh)"
 
 # --- Write agent env file ---------------------------------------------------
 
