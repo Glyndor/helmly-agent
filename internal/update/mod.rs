@@ -16,6 +16,15 @@ pub async fn perform_update(version: &str, download_url: &str, sig_url: &str) ->
     validate_github_url(download_url)?;
     validate_github_url(sig_url)?;
 
+    // C3: refuse to overwrite a dpkg-managed binary. The marker file is
+    // written by `setup-agent.sh` (value "script") and by the future
+    // `helmly-agent.deb` postinst (value "dpkg"). Absence defaults to
+    // "script" so today's installs continue to self-update. Fail-closed
+    // on unreadable / invalid contents — a corrupted marker must not
+    // silently degrade to script-style overwrite on top of a dpkg
+    // record. Operator rollback: `sudo rm /etc/glyndor/helmly/.install-method`.
+    check_install_method_marker_at(INSTALL_METHOD_MARKER_PATH)?;
+
     tracing::info!(version, "starting self-update");
 
     // Build separate SSRF-safe clients per URL: resolves DNS once, validates
@@ -249,5 +258,148 @@ fn is_private_ip(ip: std::net::IpAddr) -> bool {
                 || (v6.segments()[0] & 0xfe00) == 0xfc00  // fc00::/7 ULA
                 || (v6.segments()[0] & 0xffc0) == 0xfe80 // fe80::/10 link-local
         }
+    }
+}
+
+/// Path to the install-method marker file. Set by `setup-agent.sh` and
+/// (in the future) by the debian postinst. Read by `check_install_method_marker`.
+pub(crate) const INSTALL_METHOD_MARKER_PATH: &str = "/etc/glyndor/helmly/.install-method";
+
+/// C3: refuse to overwrite an apt-managed helmly-agent binary.
+///
+/// Marker values:
+/// - `"script"` — installed by `setup-agent.sh`. Self-update is allowed.
+/// - `"dpkg"` — installed (or upgraded to) by the helmly-agent `.deb`.
+///   Self-update is refused; the operator runs `apt upgrade helmly-agent`.
+/// - Absent — treated as `"script"` (preserves behaviour of every
+///   pre-marker install).
+/// - Anything else, or unreadable — fail closed.
+///
+/// The path is an argument so unit tests can point at a temp file; the
+/// `perform_update` caller passes the constant.
+pub(crate) fn check_install_method_marker_at(path: &str) -> Result<()> {
+    let contents = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // No marker — assume script-installed (today's behaviour).
+            return Ok(());
+        }
+        Err(e) => {
+            anyhow::bail!(
+                "{path} is unreadable ({e}); refusing self-update. \
+                 Delete the file to allow script-based updates, or fix it \
+                 to contain exactly 'script' or 'dpkg'."
+            );
+        }
+    };
+    match contents.trim() {
+        "script" => Ok(()),
+        "dpkg" => {
+            anyhow::bail!(
+                "{path} marks this install as managed by a package manager \
+                 (helmly-agent.deb). Run `apt upgrade helmly-agent` (or \
+                 the equivalent for your package manager) instead of \
+                 triggering an in-band self-update. To roll back the \
+                 check, `sudo rm {path}`."
+            );
+        }
+        other => {
+            anyhow::bail!(
+                "{path} contains an unrecognised value {other:?}; refusing \
+                 self-update. Allowed values: 'script' or 'dpkg'. \
+                 Delete the file to roll back."
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check_install_method_marker_at;
+    use std::io::Write;
+
+    fn tmp_marker(content: &str) -> std::path::PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "helmly-agent-install-method-{}-{}.marker",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let mut f = std::fs::File::create(&path).expect("create tmp marker");
+        f.write_all(content.as_bytes()).expect("write tmp marker");
+        path
+    }
+
+    /// C3: missing marker is treated as "script" — preserves today's
+    /// behaviour of every pre-marker install.
+    #[test]
+    fn install_method_marker_absent_is_ok() {
+        let mut p = std::env::temp_dir();
+        p.push(format!(
+            "helmly-agent-install-method-{}-{}-absent.marker",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_file(&p);
+        assert!(check_install_method_marker_at(p.to_str().unwrap()).is_ok());
+    }
+
+    /// C3: marker = "script" allows self-update (today's path).
+    #[test]
+    fn install_method_marker_script_allows() {
+        let p = tmp_marker("script\n");
+        assert!(check_install_method_marker_at(p.to_str().unwrap()).is_ok());
+    }
+
+    /// C3: marker = "dpkg" refuses self-update. Reverting the
+    /// `bail!` arm back to `Ok(())` makes this test go red.
+    #[test]
+    fn install_method_marker_dpkg_refuses() {
+        let p = tmp_marker("dpkg\n");
+        let r = check_install_method_marker_at(p.to_str().unwrap());
+        let err = match r {
+            Ok(()) => panic!("dpkg marker must refuse self-update; got Ok"),
+            Err(e) => e,
+        };
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("managed by a package manager"),
+            "refusal message must name the cause; got: {msg}"
+        );
+    }
+
+    /// C3: an unrecognised value fails closed (refuses self-update).
+    /// Defends against typos or attacker edits to the marker.
+    #[test]
+    fn install_method_marker_invalid_value_refuses() {
+        let p = tmp_marker("docker\n");
+        let r = check_install_method_marker_at(p.to_str().unwrap());
+        let err = r.expect_err("invalid marker must fail closed; got Ok");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("unrecognised value"),
+            "invalid-value message must name the cause; got: {msg}"
+        );
+    }
+
+    /// C3: a file the agent cannot read also fails closed.
+    /// Use the absolute path to a directory — opening a directory as a
+    /// file is an I/O error kind that is NOT NotFound.
+    #[cfg(unix)]
+    #[test]
+    fn install_method_marker_unreadable_refuses() {
+        let r = check_install_method_marker_at("/proc");
+        let err = r.expect_err("unreadable marker must fail closed; got Ok");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("unreadable"),
+            "unreadable-message must name the cause; got: {msg}"
+        );
     }
 }
