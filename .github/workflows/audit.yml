@@ -1,0 +1,22 @@
+name: Audit
+
+on:
+  schedule:
+    # Weekly Monday 06:00 UTC. The rust-audit.yml reusable pins Rust
+    # 1.97 + cargo-audit 0.22.2 + cargo-deny 0.20.2 (see the
+    # reusable for why a pinned toolchain matters — a floating
+    # preinstalled Rust silently changes the advisory surface).
+    - cron: '0 6 * * 1'
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    uses: Glyndor/.github/.github/workflows/rust-audit.yml@59d6af42ba3a4f7baa05fd4dbca0701bf858b452 # v1.14.2
+    with:
+      working-directory: '.'

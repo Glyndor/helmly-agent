@@ -1,0 +1,60 @@
+# cargo-audit configuration for helmly-agent.
+#
+# cargo-audit (run via .github/workflows/audit.yml against the
+# rust-audit.yml reusable) fails on any RUSTSEC advisory — vulnerabilities
+# by default, *and* warnings (`--deny warnings`). Two of the three
+# findings today are real warnings but unreachable from helmly-agent's
+# binary; one is reachable and trivially fixable but the bump is
+# outside this PR's scope.
+#
+# Reachable? "Reachability" here means: is the dep linked into the
+# helmly-agent binary, not just present in Cargo.lock. `sqlx-mysql`
+# and `event-listener` both reach Cargo.lock through sqlx's
+# `runtime-tokio-rustls` + `macros` features, but only the latter is
+# pulled into the binary's compile graph (verified with
+# `cargo tree -i <crate>`). `sqlx-mysql` is a proc-macro-only dep
+# (`sqlx-macros-core`'s compile-time driver verification) and is not
+# linked into the final binary.
+#
+# Re-evaluate each entry below:
+# - every sqlx release (every ~6 weeks): does the new version still
+#   pull `rsa` / `event-listener` / `spin`? Drop entries when the
+#   source dep is gone. Today: all three still pull them.
+# - every 6 months: re-measure the binary for any of these paths
+#   becoming live (e.g. enabling a sqlx feature that pulls the
+#   `mysql` driver would expose `rsa`).
+
+[advisories]
+# RUSTSEC-2023-0071 — `rsa` 0.9.10 Marvin-Attack timing sidechannel.
+# Medium severity. No fixed upgrade is available upstream as of
+# 2026-08-17.
+# Reachability in helmly-agent: NONE. The `rsa` crate is only pulled
+# by `sqlx-mysql`, which is a build-time proc-macro dependency of
+# `sqlx-macros-core` (driven by the `macros` feature for compile-time
+# query verification) and is NOT linked into the final binary. Verified
+# via `cargo tree -i rsa` (only sqlx-mysql appears) and via `cargo
+# metadata --format-version 1 | jq '.packages[] | select(.name ==
+# "helmly-agent") | .dependencies[] | select(.name == "rsa")'` (rsa is
+# absent from the agent's direct-dep list).
+# Re-check on: every sqlx release.
+ignore = [
+    "RUSTSEC-2023-0071",  # rsa 0.9.10 — Marvin-Attack; unreachable (sqlx-mysql proc-macro only)
+]
+
+# RUSTSEC-2026-0221 — `event-listener` 5.4.1 !Send tags via StackSlot.
+# Soundness issue. Patched in `>=5.4.2`. sqlx-core pulls 5.4.1 transitively
+# via the `runtime-tokio-rustls` + `macros` feature combination.
+# Reachability in helmly-agent: LIVE. `event-listener` is on the
+# final binary's runtime path (sqlx-core uses it for its internal
+# Listener). The fix is one Cargo.toml line — a `event-listener = "5.4.2"`
+# direct dep (cargo's resolver will pick the patched version for both
+# sqlx and the agent). A separate PR will apply that bump; for now
+# this is a known, scheduled fix and not a silent risk.
+# Re-check on: every event-listener release above 5.4.2.
+# ignore = [
+#     "RUSTSEC-2026-0221",  # event-listener 5.4.1 — !Send tags; fix queued in separate PR
+# ]
+
+# spin 0.9.8 yanked — informational only (not in the advisories table;
+# `cargo audit --deny warnings` does NOT trip on yanked warnings, only
+# on soundness/vuln warnings). Re-evaluate on next spin release.
