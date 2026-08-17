@@ -85,10 +85,7 @@ mod tests {
 
     #[test]
     fn display_forbidden_includes_reason() {
-        assert_eq!(
-            AgentError::Forbidden("foo").to_string(),
-            "forbidden: foo",
-        );
+        assert_eq!(AgentError::Forbidden("foo").to_string(), "forbidden: foo",);
     }
 
     #[test]
@@ -134,10 +131,7 @@ mod tests {
     async fn into_response_unauthorized_is_401_with_code() {
         let r = AgentError::Unauthorized.into_response();
         assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
-        assert_eq!(
-            body_json(r).await,
-            json!({ "error": "unauthorized" }),
-        );
+        assert_eq!(body_json(r).await, json!({ "error": "unauthorized" }),);
     }
 
     #[tokio::test]
@@ -169,8 +163,7 @@ mod tests {
     #[tokio::test]
     async fn into_response_internal_is_500_with_redacted_code() {
         let r =
-            AgentError::Internal(anyhow::anyhow!("contains secret: /etc/passwd"))
-                .into_response();
+            AgentError::Internal(anyhow::anyhow!("contains secret: /etc/passwd")).into_response();
         assert_eq!(r.status(), StatusCode::INTERNAL_SERVER_ERROR);
         let body = body_json(r).await;
         assert_eq!(
