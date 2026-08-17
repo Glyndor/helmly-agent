@@ -617,7 +617,7 @@ mod tests {
 
     fn clear_test_env(prefix: &str) {
         std::env::remove_var(prefix);
-        std::env::remove_var(&format!("{prefix}_FILE"));
+        std::env::remove_var(format!("{prefix}_FILE"));
     }
 
     fn set_test_env(prefix: &str, val: &str) {
