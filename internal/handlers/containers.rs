@@ -36,6 +36,20 @@ pub async fn handle_container_deploy(
     let project_id = require_valid_id(&cmd.command, "project_id")?;
     let compose_yaml = require_str(&cmd.command, "compose_yaml")?;
 
+    // C4: deny-list walker on the compose YAML. The audit's attack
+    // chain (`privileged: true` + `volumes: ["/:/host"]` → root on host)
+    // requires validation *before* the file lands on disk and is
+    // exec'd by `podman compose up -d`. Rejection here means the
+    // payload never reaches the podman CLI.
+    let project_dir = format!("/var/lib/glyndor/helmly/tenants/{tenant_id}/{project_id}");
+    if let Err(e) = super::validate::validate_compose(&compose_yaml, project_dir.as_str()) {
+        // Log the detailed reason server-side; don't leak host/port details
+        // to the caller (an attacker probing for valid tenant dirs could
+        // otherwise distinguish allowed from disallowed by the response shape).
+        tracing::warn!("container.deploy rejected: {e}");
+        return Err(AgentError::Forbidden("container.deploy compose rejected"));
+    }
+
     let compose_path = podman::compose_deploy(podman::DeployOptions {
         tenant_id: &tenant_id,
         project_id: &project_id,
