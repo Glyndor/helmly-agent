@@ -18,13 +18,16 @@ jobs:
     # format is `@<sha> # vX.Y.Z`.
     uses: Glyndor/.github/.github/workflows/rust-ci.yml@59d6af42ba3a4f7baa05fd4dbca0701bf858b452 # v1.14.2
     with:
-      # Coverage ratchet (measured 2026-08-17 on develop with the five
-      # CRITICAL merges applied: 30.09% lines / 37.91% functions). A
-      # gate that always fails ends up bridged — which is how the org
-      # got suspended last time — so the threshold lives just below the
-      # current measurement. Any drop is caught; growth is allowed.
-      # Plan to 90%: write integration tests for `podman/mod.rs`,
-      # `ws_client.rs`, `handlers/wireguard.rs`, `nginx.rs` (all
-      # currently 0% — they need a real podman/nginx, not just unit
-      # stubs), then ratchet up.
-      coverage-threshold: 30
+      # Coverage ratchet (measured 2026-08-17 on develop: 49.80%
+      # lines / 57.50% functions / 50.68% regions after the logic-
+      # pure test round). Threshold 47 leaves 2.8pp of margin under
+      # the measured value — wide enough to add code without
+      # fighting the gate on every PR, narrow enough that any
+      # regression real enough to drop coverage by 3pp fails the
+      # build. The threshold raises in the same PR that raises the
+      # coverage — never silently. The next step is the pure-logic
+      # files at 0% (error.rs, cert.rs, handlers/metrics.rs,
+      # handlers/nftables.rs), each ~150–170 lines that don't need
+      # podman/nginx/network — those go first because they raise the
+      # ratchet cheaply.
+      coverage-threshold: 47
