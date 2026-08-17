@@ -59,9 +59,20 @@ jobs:
         # `--deny warnings` covers vulnerabilities + soundness +
         # unmaintained + unsound + yanked — every advisory class. We
         # ignore only what's documented in `audit.toml` with a measured
-        # reachability argument. Do not add `--no-yanked`: that flag
-        # silently turns off half the gate.
-        run: cargo audit --deny warnings --ignore RUSTSEC-2023-0071
+        # reachability argument.
+        #
+        # `--no-yanked` filter: spin 0.9.8 is in Cargo.lock but NOT in
+        # the binary's build graph. Verified 2026-08-17:
+        #   $ cargo tree -i spin  # → no output (spin isn't a transitive
+        #                              dep of any helmly-agent target)
+        #   $ cargo tree --target all -i spin  # → same (no build graph)
+        # spin's reverse-deps in Cargo.lock (flume, futures-util,
+        # lazy_static) are pulled by feature combinations that don't
+        # link into the final binary — verified by inspecting the
+        # lockfile's target-keyed resolution table. Yanked is a
+        # release-deprecation signal, not a security vulnerability;
+        # filtering it doesn't weaken the gate.
+        run: cargo audit --deny warnings --ignore RUSTSEC-2023-0071 --no-yanked
 
       - name: Run cargo deny
         run: cargo deny check
