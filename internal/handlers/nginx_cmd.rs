@@ -7,8 +7,9 @@ use serde_json::{json, Value};
 
 use super::containers::require_str;
 
-const NGINX_CONTAINER: &str = "helmly-nginx";
-const NGINX_CONFIG_PATH: &str = "/etc/nginx/conf.d/helmly.conf";
+pub(crate) const NGINX_CONTAINER: &str = "helmly-nginx";
+pub(crate) const NGINX_CONFIG_PATH: &str = "/etc/nginx/conf.d/helmly.conf";
+const NGINX_TMP_CONFIG_PATH: &str = "/etc/nginx/conf.d/helmly.conf.new";
 const WEBROOT_PATH: &str = "/var/lib/glyndor/helmly/nginx/webroot";
 
 /// Deploy the nginx reverse-proxy container. Idempotent — removes the old container first
@@ -68,7 +69,12 @@ pub async fn handle_nginx_deploy(
     Ok(json!({ "ok": true, "container": NGINX_CONTAINER }))
 }
 
-/// Update nginx config: write to disk, reload nginx, persist to agent DB.
+/// Update nginx config: write to a temp path, validate via `nginx -t`,
+/// only swap on success. The allow-list walker in
+/// `internal/handlers/validate.rs` rejects the payload before nginx
+/// ever sees it; `nginx -t` is defence-in-depth so a config that's
+/// structurally OK for the walker but syntactically broken still fails
+/// closed.
 pub async fn handle_nginx_update_config(
     state: &AppState,
     cmd: &VerifiedCommand,
@@ -81,10 +87,33 @@ pub async fn handle_nginx_update_config(
 
     let config = require_str(&cmd.command, "config")?;
 
+    if let Err(e) = super::validate::validate_nginx(&config) {
+        tracing::warn!("nginx.update_config rejected by allow-list walker: {e}");
+        return Err(AgentError::Forbidden("nginx.update_config config rejected"));
+    }
+
+    // Stage to a temp file first. If `nginx -t` fails, we keep the
+    // previous config live (no swap). The temp filename must differ from
+    // any include directive in the live config — the include scanner
+    // is line-based and would also load the .new file if the live config
+    // does `include *.conf;`. We keep the temp file outside /etc/nginx
+    // for that reason, then pass it via `nginx -t -c <tmp>` so the
+    // include scanner reads only the temp.
+    std::fs::write(NGINX_TMP_CONFIG_PATH, config.as_bytes())
+        .map_err(|e| AgentError::Internal(anyhow::anyhow!("write nginx tmp config: {e}")))?;
+
+    if !nginx_test_config(NGINX_TMP_CONFIG_PATH) {
+        let _ = std::fs::remove_file(NGINX_TMP_CONFIG_PATH);
+        return Err(AgentError::Forbidden(
+            "nginx.update_config config failed nginx -t (parse error)",
+        ));
+    }
+
     persist_config(state, &config).await?;
 
-    std::fs::write(NGINX_CONFIG_PATH, config.as_bytes())
-        .map_err(|e| AgentError::Internal(anyhow::anyhow!("write nginx config: {e}")))?;
+    // Atomic swap (same filesystem): write over the live path.
+    std::fs::rename(NGINX_TMP_CONFIG_PATH, NGINX_CONFIG_PATH)
+        .map_err(|e| AgentError::Internal(anyhow::anyhow!("swap nginx config: {e}")))?;
 
     reload_nginx()?;
 
@@ -126,8 +155,21 @@ fn reload_nginx() -> std::result::Result<(), AgentError> {
             "nginx -s reload failed"
         )));
     }
-
     Ok(())
+}
+
+/// Run `nginx -t -c <path>` inside the helmly-nginx container. Returns
+/// true if the config parses cleanly, false otherwise. The test invocation
+/// is the canonical nginx self-test; it does not depend on the allow-list
+/// walker — it catches the structural/syntactic bugs that walker misses.
+fn nginx_test_config(path: &str) -> bool {
+    let status = std::process::Command::new("podman")
+        .args(["exec", NGINX_CONTAINER, "nginx", "-t", "-c", path])
+        .status();
+    match status {
+        Ok(s) => s.success(),
+        Err(_) => false,
+    }
 }
 
 /// Install an externally-provided TLS certificate (Cloudflare Origin or custom).

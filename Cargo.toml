@@ -41,6 +41,12 @@ tokio-rustls = "0.26"
 reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false }
 url = "2"
 
+# Validation of signed-payload inputs (C4). Pulled in as a direct dep
+# so the deny-list walker in internal/handlers/validate.rs compiles
+# without relying on a transitive; the podup 0.9.0 git dep that
+# already brings serde_yaml_ng does not count.
+serde_yaml_ng = "0.10"
+
 # WebSocket client (agent → dashboard persistent connection)
 tokio-tungstenite = { version = "0.29", features = ["rustls-tls-native-roots"] }
 futures-util = "0.3"

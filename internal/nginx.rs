@@ -150,9 +150,38 @@ async fn restore_nginx_config(state: &AppState) {
         }
     };
 
+    // C4: validate the restored config against the same allow-list the
+    // dashboard path enforces. A persisted config that no longer matches
+    // (e.g. because the allow-list tightened in a newer release) is
+    // rejected on restore — fail closed, do not reload.
+    if let Err(e) = crate::handlers::validate::validate_nginx(&config) {
+        tracing::error!(
+            "nginx restore refused by allow-list walker (config no longer \
+             compatible with current agent version): {e}"
+        );
+        return;
+    }
+
     let config_path = "/etc/nginx/conf.d/helmly.conf";
-    if let Err(e) = std::fs::write(config_path, config) {
-        tracing::error!("failed to write nginx config: {e}");
+    let tmp_path = "/etc/nginx/conf.d/helmly.conf.new";
+    if let Err(e) = std::fs::write(tmp_path, &config) {
+        tracing::error!("failed to write nginx tmp config: {e}");
+        return;
+    }
+
+    // Defence-in-depth: even after allow-list validation, run `nginx -t`
+    // before swapping over the live config.
+    let test = std::process::Command::new("podman")
+        .args(["exec", CONTAINER_NAME, "nginx", "-t", "-c", tmp_path])
+        .status();
+    if !matches!(test, Ok(s) if s.success()) {
+        tracing::error!("nginx -t failed on restored config; not reloading");
+        let _ = std::fs::remove_file(tmp_path);
+        return;
+    }
+
+    if let Err(e) = std::fs::rename(tmp_path, config_path) {
+        tracing::error!("failed to swap nginx config: {e}");
         return;
     }
 
