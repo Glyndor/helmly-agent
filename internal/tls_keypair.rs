@@ -28,15 +28,15 @@ pub(crate) const CERT_VALIDITY_DAYS: i64 = 90;
 
 /// A generated keypair, DER-encoded, plus the fingerprint that identifies it.
 pub(crate) struct GeneratedKeypair {
-    /// X.509 certificate, DER.
-    pub cert_der: Vec<u8>,
-    /// PKCS#8 private key, DER. Zeroized on drop by the caller's handling.
-    pub key_der: zeroize::Zeroizing<Vec<u8>>,
-    /// Lowercase hex SHA-256 over `cert_der`, colon-free.
-    ///
-    /// This is what an operator reads out to the dashboard, so it is the
-    /// one value here meant to be copied by a human.
-    pub fingerprint_sha256: String,
+	/// X.509 certificate, DER.
+	pub cert_der: Vec<u8>,
+	/// PKCS#8 private key, DER. Zeroized on drop by the caller's handling.
+	pub key_der: zeroize::Zeroizing<Vec<u8>>,
+	/// Lowercase hex SHA-256 over `cert_der`, colon-free.
+	///
+	/// This is what an operator reads out to the dashboard, so it is the
+	/// one value here meant to be copied by a human.
+	pub fingerprint_sha256: String,
 }
 
 /// Generate a self-signed certificate for `subject_alt_names`.
@@ -48,49 +48,49 @@ pub(crate) struct GeneratedKeypair {
 /// handshake with an error that reads like a certificate problem rather
 /// than a configuration one.
 pub(crate) fn generate(subject_alt_names: &[String]) -> Result<GeneratedKeypair> {
-    if subject_alt_names.is_empty() {
-        anyhow::bail!(
-            "at least one subject alternative name is required; the dashboard \
+	if subject_alt_names.is_empty() {
+		anyhow::bail!(
+			"at least one subject alternative name is required; the dashboard \
              dials the agent by address, and a certificate with no SAN fails \
              every handshake"
-        );
-    }
+		);
+	}
 
-    let mut params = rcgen::CertificateParams::new(subject_alt_names.to_vec())
-        .context("build certificate parameters")?;
-    // Both bounds are set explicitly. CERT_VALIDITY_DAYS existed and was
-    // printed to the operator before it was applied to the certificate,
-    // which is the shape of saying a control holds without making it hold:
-    // rcgen's default not_after is decades out, so the message would have
-    // been the only place the 90 days existed.
-    let now = std::time::SystemTime::now();
-    params.not_before = now.into();
-    params.not_after =
-        (now + std::time::Duration::from_secs(CERT_VALIDITY_DAYS as u64 * 86_400)).into();
-    params
-        .distinguished_name
-        .push(rcgen::DnType::CommonName, "helmly-agent");
+	let mut params = rcgen::CertificateParams::new(subject_alt_names.to_vec())
+		.context("build certificate parameters")?;
+	// Both bounds are set explicitly. CERT_VALIDITY_DAYS existed and was
+	// printed to the operator before it was applied to the certificate,
+	// which is the shape of saying a control holds without making it hold:
+	// rcgen's default not_after is decades out, so the message would have
+	// been the only place the 90 days existed.
+	let now = std::time::SystemTime::now();
+	params.not_before = now.into();
+	params.not_after =
+		(now + std::time::Duration::from_secs(CERT_VALIDITY_DAYS as u64 * 86_400)).into();
+	params
+		.distinguished_name
+		.push(rcgen::DnType::CommonName, "helmly-agent");
 
-    let key_pair = rcgen::KeyPair::generate().context("generate key pair")?;
-    let cert = params
-        .self_signed(&key_pair)
-        .context("self-sign the certificate")?;
+	let key_pair = rcgen::KeyPair::generate().context("generate key pair")?;
+	let cert = params
+		.self_signed(&key_pair)
+		.context("self-sign the certificate")?;
 
-    let cert_der = cert.der().to_vec();
-    let key_der = zeroize::Zeroizing::new(key_pair.serialize_der());
+	let cert_der = cert.der().to_vec();
+	let key_der = zeroize::Zeroizing::new(key_pair.serialize_der());
 
-    use sha2::Digest;
-    let digest = sha2::Sha256::digest(&cert_der);
-    let fingerprint_sha256 = digest
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<String>();
+	use sha2::Digest;
+	let digest = sha2::Sha256::digest(&cert_der);
+	let fingerprint_sha256 = digest
+		.iter()
+		.map(|b| format!("{b:02x}"))
+		.collect::<String>();
 
-    Ok(GeneratedKeypair {
-        cert_der,
-        key_der,
-        fingerprint_sha256,
-    })
+	Ok(GeneratedKeypair {
+		cert_der,
+		key_der,
+		fingerprint_sha256,
+	})
 }
 
 /// Write `bytes` to `path` at mode 0600, refusing to clobber an existing file.
@@ -101,22 +101,22 @@ pub(crate) fn generate(subject_alt_names: &[String]) -> Result<GeneratedKeypair>
 /// until the next connection. The caller removes the file deliberately if
 /// it means to rotate.
 pub(crate) fn write_secret(path: &Path, bytes: &[u8]) -> Result<()> {
-    use std::fs::OpenOptions;
-    let mut opts = OpenOptions::new();
-    opts.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
-    }
-    let mut f = opts
-        .open(path)
-        .with_context(|| format!("create {} (refusing to overwrite)", path.display()))?;
-    f.write_all(bytes)
-        .with_context(|| format!("write {}", path.display()))?;
-    f.sync_all()
-        .with_context(|| format!("fsync {}", path.display()))?;
-    Ok(())
+	use std::fs::OpenOptions;
+	let mut opts = OpenOptions::new();
+	opts.write(true).create_new(true);
+	#[cfg(unix)]
+	{
+		use std::os::unix::fs::OpenOptionsExt;
+		opts.mode(0o600);
+	}
+	let mut f = opts
+		.open(path)
+		.with_context(|| format!("create {} (refusing to overwrite)", path.display()))?;
+	f.write_all(bytes)
+		.with_context(|| format!("write {}", path.display()))?;
+	f.sync_all()
+		.with_context(|| format!("fsync {}", path.display()))?;
+	Ok(())
 }
 
 #[cfg(test)]

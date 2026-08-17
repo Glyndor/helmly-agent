@@ -23,33 +23,33 @@ use std::sync::Mutex;
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 fn clear_dashboard_env() {
-    std::env::remove_var("DASHBOARD_VERIFY_KEY");
-    std::env::remove_var("DASHBOARD_VERIFY_KEY_FILE");
+	std::env::remove_var("DASHBOARD_VERIFY_KEY");
+	std::env::remove_var("DASHBOARD_VERIFY_KEY_FILE");
 }
 
 /// Unique temp path per test (`/tmp/helmly-config-test-{pid}-{nanos}-{label}`).
 /// Caller owns the path and is expected to `remove_file` on teardown.
 fn temp_path(label: &str) -> std::path::PathBuf {
-    let pid = std::process::id();
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    std::env::temp_dir().join(format!("helmly-config-test-{pid}-{nanos}-{label}"))
+	let pid = std::process::id();
+	let nanos = std::time::SystemTime::now()
+		.duration_since(std::time::UNIX_EPOCH)
+		.map(|d| d.as_nanos())
+		.unwrap_or(0);
+	std::env::temp_dir().join(format!("helmly-config-test-{pid}-{nanos}-{label}"))
 }
 
 fn write_file_0o600(path: &Path, content: &str) {
-    std::fs::write(path, content).expect("write temp file");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-            .expect("chmod 0o600");
-    }
+	std::fs::write(path, content).expect("write temp file");
+	#[cfg(unix)]
+	{
+		use std::os::unix::fs::PermissionsExt;
+		std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+			.expect("chmod 0o600");
+	}
 }
 
 fn b64(bytes: &[u8; 32]) -> String {
-    base64ct::Base64::encode_string(bytes)
+	base64ct::Base64::encode_string(bytes)
 }
 
 // ---- 1. File parser: `load_dashboard_keyring_at(path)` ----
@@ -60,18 +60,18 @@ fn b64(bytes: &[u8; 32]) -> String {
 /// this test goes red.
 #[test]
 fn valid_one_key_parses() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    clear_dashboard_env();
+	let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+	clear_dashboard_env();
 
-    let path = temp_path("one-key");
-    let key = [0x42u8; 32];
-    write_file_0o600(&path, &format!("{}\n", b64(&key)));
+	let path = temp_path("one-key");
+	let key = [0x42u8; 32];
+	write_file_0o600(&path, &format!("{}\n", b64(&key)));
 
-    let ring = load_dashboard_keyring_at(&path).expect("one valid key must Ok");
-    assert_eq!(ring.len(), 1, "one b64-32-byte line produces a 1-slot ring");
-    assert_eq!(ring[0], key, "ring bytes must round-trip the encoded key");
+	let ring = load_dashboard_keyring_at(&path).expect("one valid key must Ok");
+	assert_eq!(ring.len(), 1, "one b64-32-byte line produces a 1-slot ring");
+	assert_eq!(ring[0], key, "ring bytes must round-trip the encoded key");
 
-    std::fs::remove_file(&path).ok();
+	std::fs::remove_file(&path).ok();
 }
 
 /// Control: comment and blank lines are skipped before b64 decode.
@@ -79,35 +79,35 @@ fn valid_one_key_parses() {
 /// line reach `Base64::decode_vec` → `not base64` Err → red.
 #[test]
 fn two_keys_skip_blank_and_comment_lines() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    clear_dashboard_env();
+	let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+	clear_dashboard_env();
 
-    let path = temp_path("two-keys");
-    let key_a = [0x11u8; 32];
-    let key_b = [0x22u8; 32];
-    let body = format!(
-        "# rotation comment (skipped)\n\
+	let path = temp_path("two-keys");
+	let key_a = [0x11u8; 32];
+	let key_b = [0x22u8; 32];
+	let body = format!(
+		"# rotation comment (skipped)\n\
              \n\
              {}\n\
              \n\
                # second comment with leading whitespace (also skipped)\n\
              {}\n",
-        b64(&key_a),
-        b64(&key_b),
-    );
-    write_file_0o600(&path, &body);
+		b64(&key_a),
+		b64(&key_b),
+	);
+	write_file_0o600(&path, &body);
 
-    let ring = load_dashboard_keyring_at(&path).expect("two valid keys must Ok");
-    assert_eq!(
-        ring.len(),
-        2,
-        "comment + blank + ws-indented comment must all be skipped; got len={}",
-        ring.len()
-    );
-    assert_eq!(ring[0], key_a);
-    assert_eq!(ring[1], key_b);
+	let ring = load_dashboard_keyring_at(&path).expect("two valid keys must Ok");
+	assert_eq!(
+		ring.len(),
+		2,
+		"comment + blank + ws-indented comment must all be skipped; got len={}",
+		ring.len()
+	);
+	assert_eq!(ring[0], key_a);
+	assert_eq!(ring[1], key_b);
 
-    std::fs::remove_file(&path).ok();
+	std::fs::remove_file(&path).ok();
 }
 
 /// Control: b64-decode gate. Non-b64 characters must yield a
@@ -116,26 +116,26 @@ fn two_keys_skip_blank_and_comment_lines() {
 /// rejection per `standards/testing/index.md#a-test-that-stays-green`.
 #[test]
 fn malformed_base64_yields_distinct_error() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    clear_dashboard_env();
+	let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+	clear_dashboard_env();
 
-    let path = temp_path("malformed-b64");
-    write_file_0o600(&path, "!!!not_base64!!!\n");
+	let path = temp_path("malformed-b64");
+	write_file_0o600(&path, "!!!not_base64!!!\n");
 
-    let err = load_dashboard_keyring_at(&path).expect_err("non-b64 line must Err at decode");
-    let msg = format!("{err:#}");
-    assert!(
-        msg.contains("not base64"),
-        "rejection must name the b64-decode control; got: {msg}"
-    );
-    // Fixture validation: only the b64 character class is wrong.
-    // Length, mode, and Ed25519 (when validated) checks must not pre-empt this one.
-    assert!(
-        !msg.contains("must decode to exactly 32 bytes"),
-        "malformed-b64 must not be masked as a length error; got: {msg}"
-    );
+	let err = load_dashboard_keyring_at(&path).expect_err("non-b64 line must Err at decode");
+	let msg = format!("{err:#}");
+	assert!(
+		msg.contains("not base64"),
+		"rejection must name the b64-decode control; got: {msg}"
+	);
+	// Fixture validation: only the b64 character class is wrong.
+	// Length, mode, and Ed25519 (when validated) checks must not pre-empt this one.
+	assert!(
+		!msg.contains("must decode to exactly 32 bytes"),
+		"malformed-b64 must not be masked as a length error; got: {msg}"
+	);
 
-    std::fs::remove_file(&path).ok();
+	std::fs::remove_file(&path).ok();
 }
 
 /// Control: length-gate. Valid b64 of 31 bytes must Err with the
@@ -143,28 +143,28 @@ fn malformed_base64_yields_distinct_error() {
 /// acceptance test just inside the 32-byte limit).
 #[test]
 fn decodes_to_31_bytes_rejected_with_length_message() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    clear_dashboard_env();
+	let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+	clear_dashboard_env();
 
-    let path = temp_path("len-31");
-    // 31 raw bytes — the b64 decode succeeds, the length check is the only failure.
-    let raw_31 = [0xABu8; 31];
-    let s = base64ct::Base64::encode_string(&raw_31);
-    write_file_0o600(&path, &format!("{s}\n"));
+	let path = temp_path("len-31");
+	// 31 raw bytes — the b64 decode succeeds, the length check is the only failure.
+	let raw_31 = [0xABu8; 31];
+	let s = base64ct::Base64::encode_string(&raw_31);
+	write_file_0o600(&path, &format!("{s}\n"));
 
-    let err =
-        load_dashboard_keyring_at(&path).expect_err("b64-of-31-bytes must Err at the length gate");
-    let msg = format!("{err:#}");
-    assert!(
-        msg.contains("must decode to exactly 32 bytes"),
-        "rejection must name the length control; got: {msg}"
-    );
-    assert!(
-        !msg.contains("not base64"),
-        "valid-b64-of-31 must not be mis-classified as b64 failure; got: {msg}"
-    );
+	let err =
+		load_dashboard_keyring_at(&path).expect_err("b64-of-31-bytes must Err at the length gate");
+	let msg = format!("{err:#}");
+	assert!(
+		msg.contains("must decode to exactly 32 bytes"),
+		"rejection must name the length control; got: {msg}"
+	);
+	assert!(
+		!msg.contains("not base64"),
+		"valid-b64-of-31 must not be mis-classified as b64 failure; got: {msg}"
+	);
 
-    std::fs::remove_file(&path).ok();
+	std::fs::remove_file(&path).ok();
 }
 
 /// Control: length-gate, other side. Valid b64 of 33 bytes must
@@ -172,23 +172,23 @@ fn decodes_to_31_bytes_rejected_with_length_message() {
 /// truncation).
 #[test]
 fn decodes_to_33_bytes_rejected_with_length_message() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    clear_dashboard_env();
+	let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+	clear_dashboard_env();
 
-    let path = temp_path("len-33");
-    let raw_33 = [0xCDu8; 33];
-    let s = base64ct::Base64::encode_string(&raw_33);
-    write_file_0o600(&path, &format!("{s}\n"));
+	let path = temp_path("len-33");
+	let raw_33 = [0xCDu8; 33];
+	let s = base64ct::Base64::encode_string(&raw_33);
+	write_file_0o600(&path, &format!("{s}\n"));
 
-    let err =
-        load_dashboard_keyring_at(&path).expect_err("b64-of-33-bytes must Err at the length gate");
-    let msg = format!("{err:#}");
-    assert!(
-        msg.contains("must decode to exactly 32 bytes"),
-        "rejection must name the length control; got: {msg}"
-    );
+	let err =
+		load_dashboard_keyring_at(&path).expect_err("b64-of-33-bytes must Err at the length gate");
+	let msg = format!("{err:#}");
+	assert!(
+		msg.contains("must decode to exactly 32 bytes"),
+		"rejection must name the length control; got: {msg}"
+	);
 
-    std::fs::remove_file(&path).ok();
+	std::fs::remove_file(&path).ok();
 }
 
 /// Control: file-absent propagates as an error at the read site.
@@ -197,16 +197,16 @@ fn decodes_to_33_bytes_rejected_with_length_message() {
 /// would either NoOp `Ok(empty)` (red for this test) or panic.
 #[test]
 fn absent_file_returns_err() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    clear_dashboard_env();
+	let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+	clear_dashboard_env();
 
-    let path = temp_path("absent"); // never written
-    let err = load_dashboard_keyring_at(&path).expect_err("missing file must Err");
-    let msg = format!("{err:#}");
-    assert!(
-        msg.contains("read"),
-        "err must be the read site (`read <path>`); got: {msg}"
-    );
+	let path = temp_path("absent"); // never written
+	let err = load_dashboard_keyring_at(&path).expect_err("missing file must Err");
+	let msg = format!("{err:#}");
+	assert!(
+		msg.contains("read"),
+		"err must be the read site (`read <path>`); got: {msg}"
+	);
 }
 
 /// Control: Unix perm-gate. File mode 0o644 (group-readable) must
@@ -217,26 +217,26 @@ fn absent_file_returns_err() {
 #[cfg(unix)]
 #[test]
 fn world_or_group_readable_perms_rejected() {
-    use std::os::unix::fs::PermissionsExt;
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    clear_dashboard_env();
+	use std::os::unix::fs::PermissionsExt;
+	let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+	clear_dashboard_env();
 
-    let path = temp_path("wide-perms");
-    let key = [0x55u8; 32];
-    std::fs::write(&path, format!("{}\n", b64(&key))).expect("write temp file");
-    // Group-readable on purpose. mode_check test fixture.
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("chmod 0o644");
+	let path = temp_path("wide-perms");
+	let key = [0x55u8; 32];
+	std::fs::write(&path, format!("{}\n", b64(&key))).expect("write temp file");
+	// Group-readable on purpose. mode_check test fixture.
+	std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("chmod 0o644");
 
-    let err = load_dashboard_keyring_at(&path).expect_err("0o644 keyring must Err before parse");
-    let msg = format!("{err:#}");
-    assert!(
-        msg.contains("world- or group-readable"),
-        "rejection must name the perm control (M17); got: {msg}"
-    );
+	let err = load_dashboard_keyring_at(&path).expect_err("0o644 keyring must Err before parse");
+	let msg = format!("{err:#}");
+	assert!(
+		msg.contains("world- or group-readable"),
+		"rejection must name the perm control (M17); got: {msg}"
+	);
 
-    // Restore 0o600 for the cleanup remove.
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).ok();
-    std::fs::remove_file(&path).ok();
+	// Restore 0o600 for the cleanup remove.
+	std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).ok();
+	std::fs::remove_file(&path).ok();
 }
 
 // ---- 2. Env fallback ----
@@ -248,14 +248,14 @@ fn world_or_group_readable_perms_rejected() {
 /// `read_to_string` (red, since path doesn't exist either).
 #[test]
 fn no_env_no_file_returns_empty_ring() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    clear_dashboard_env();
+	let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+	clear_dashboard_env();
 
-    let ring = load_dashboard_keyring().expect("no-source path must Ok with empty ring");
-    assert!(
-        ring.is_empty(),
-        "no env + no file = empty ring; caller surfaces the user-facing error"
-    );
+	let ring = load_dashboard_keyring().expect("no-source path must Ok with empty ring");
+	assert!(
+		ring.is_empty(),
+		"no env + no file = empty ring; caller surfaces the user-facing error"
+	);
 }
 
 /// Control: `load_key32_opt` reads `DASHBOARD_VERIFY_KEY` from env
@@ -263,20 +263,20 @@ fn no_env_no_file_returns_empty_ring() {
 /// helper return None, so this test (asserting Some(bytes)) goes red.
 #[test]
 fn env_set_derives_single_32_byte_key() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    clear_dashboard_env();
+	let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+	clear_dashboard_env();
 
-    let key = [0x77u8; 32];
-    std::env::set_var("DASHBOARD_VERIFY_KEY", b64(&key));
+	let key = [0x77u8; 32];
+	std::env::set_var("DASHBOARD_VERIFY_KEY", b64(&key));
 
-    let derived =
-        load_key32_opt("DASHBOARD_VERIFY_KEY").expect("env-set b64-of-32-bytes must derive a key");
-    assert_eq!(
-        derived, key,
-        "env-derived key must round-trip the encoded bytes"
-    );
+	let derived =
+		load_key32_opt("DASHBOARD_VERIFY_KEY").expect("env-set b64-of-32-bytes must derive a key");
+	assert_eq!(
+		derived, key,
+		"env-derived key must round-trip the encoded bytes"
+	);
 
-    clear_dashboard_env();
+	clear_dashboard_env();
 }
 
 /// Control: with both env and `_FILE` unset, `load_key32_opt`
@@ -285,13 +285,13 @@ fn env_set_derives_single_32_byte_key() {
 /// path, and the env-fallback logic would be untested.
 #[test]
 fn env_unset_returns_none() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    clear_dashboard_env();
+	let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+	clear_dashboard_env();
 
-    assert!(
-        load_key32_opt("DASHBOARD_VERIFY_KEY").is_none(),
-        "no env + no _FILE means no legacy single-key fallback"
-    );
+	assert!(
+		load_key32_opt("DASHBOARD_VERIFY_KEY").is_none(),
+		"no env + no _FILE means no legacy single-key fallback"
+	);
 }
 
 // ---- 3. Seed-on-load persistence ----
@@ -305,69 +305,68 @@ fn env_unset_returns_none() {
 /// `#[cfg(unix)]` assertion fail.
 #[test]
 fn seed_writes_b64_with_mode_0o600_atomically() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    clear_dashboard_env();
+	let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+	clear_dashboard_env();
 
-    let path = temp_path("seed");
-    let key = [0x88u8; 32];
-    seed_keyring_file_at(&path, &key).expect("seed must succeed against a writable temp path");
+	let path = temp_path("seed");
+	let key = [0x88u8; 32];
+	seed_keyring_file_at(&path, &key).expect("seed must succeed against a writable temp path");
 
-    assert!(path.exists(), "seeded file must exist after the rename");
-    let raw = std::fs::read_to_string(&path).expect("read back seeded file");
-    let trimmed = raw.strip_suffix('\n').unwrap_or(&raw);
+	assert!(path.exists(), "seeded file must exist after the rename");
+	let raw = std::fs::read_to_string(&path).expect("read back seeded file");
+	let trimmed = raw.strip_suffix('\n').unwrap_or(&raw);
 
-    // Content: b64(key) + '\n'. Trim and re-decode to confirm round-trip.
-    let decoded = base64ct::Base64::decode_vec(trimmed)
-        .expect("seeded content must be valid b64 of 32 bytes");
-    assert_eq!(
-        decoded.len(),
-        32,
-        "decoded length must be 32; got {}",
-        decoded.len()
-    );
-    assert_eq!(
-        decoded.as_slice(),
-        key.as_slice(),
-        "seed round-trip must reproduce the input 32 bytes exactly"
-    );
+	// Content: b64(key) + '\n'. Trim and re-decode to confirm round-trip.
+	let decoded = base64ct::Base64::decode_vec(trimmed)
+		.expect("seeded content must be valid b64 of 32 bytes");
+	assert_eq!(
+		decoded.len(),
+		32,
+		"decoded length must be 32; got {}",
+		decoded.len()
+	);
+	assert_eq!(
+		decoded.as_slice(),
+		key.as_slice(),
+		"seed round-trip must reproduce the input 32 bytes exactly"
+	);
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(&path)
-            .expect("metadata")
-            .permissions()
-            .mode()
-            & 0o777;
-        assert_eq!(mode, 0o600, "seeded file must be mode 0600; got {mode:o}");
-    }
+	#[cfg(unix)]
+	{
+		use std::os::unix::fs::PermissionsExt;
+		let mode = std::fs::metadata(&path)
+			.expect("metadata")
+			.permissions()
+			.mode() & 0o777;
+		assert_eq!(mode, 0o600, "seeded file must be mode 0600; got {mode:o}");
+	}
 
-    std::fs::remove_file(&path).ok();
+	std::fs::remove_file(&path).ok();
 }
 
 // ---- 4. Env-var helpers (pure-logic) ----
 
 fn clear_test_env(prefix: &str) {
-    std::env::remove_var(prefix);
-    std::env::remove_var(format!("{prefix}_FILE"));
+	std::env::remove_var(prefix);
+	std::env::remove_var(format!("{prefix}_FILE"));
 }
 
 fn set_test_env(prefix: &str, val: &str) {
-    clear_test_env(prefix);
-    std::env::set_var(prefix, val);
+	clear_test_env(prefix);
+	std::env::set_var(prefix, val);
 }
 
 /// Control: `load_secret` reads `ENV` from process env when `_FILE`
 /// is unset. Removing the `env::var` fallback makes the call Err.
 #[test]
 fn load_secret_reads_env_var_when_file_unset() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    set_test_env("HELMLY_TEST_LOAD_SECRET", "rotated-fallback-env-value");
+	let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+	set_test_env("HELMLY_TEST_LOAD_SECRET", "rotated-fallback-env-value");
 
-    let got = load_secret("HELMLY_TEST_LOAD_SECRET").expect("env-set must produce an Ok(_)");
-    assert_eq!(got.as_str(), "rotated-fallback-env-value");
+	let got = load_secret("HELMLY_TEST_LOAD_SECRET").expect("env-set must produce an Ok(_)");
+	assert_eq!(got.as_str(), "rotated-fallback-env-value");
 
-    clear_test_env("HELMLY_TEST_LOAD_SECRET");
+	clear_test_env("HELMLY_TEST_LOAD_SECRET");
 }
 
 /// Control: `load_secret` prefers `ENV_FILE` over `ENV` when both
@@ -375,22 +374,22 @@ fn load_secret_reads_env_var_when_file_unset() {
 /// precedence flips the assertion.
 #[test]
 fn load_secret_prefers_file_over_env() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+	let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
 
-    let path = temp_path("load-secret-file");
-    write_file_0o600(&path, "  trimmed-from-file  \n");
-    std::env::set_var("HELMLY_TEST_LOAD_SECRET_FILE", &path);
-    std::env::set_var("HELMLY_TEST_LOAD_SECRET", "from-env-should-be-ignored");
+	let path = temp_path("load-secret-file");
+	write_file_0o600(&path, "  trimmed-from-file  \n");
+	std::env::set_var("HELMLY_TEST_LOAD_SECRET_FILE", &path);
+	std::env::set_var("HELMLY_TEST_LOAD_SECRET", "from-env-should-be-ignored");
 
-    let got = load_secret("HELMLY_TEST_LOAD_SECRET").expect("file set + env set must Ok");
-    assert_eq!(
-        got.as_str(),
-        "trimmed-from-file",
-        "_FILE path must beat the plain env var"
-    );
+	let got = load_secret("HELMLY_TEST_LOAD_SECRET").expect("file set + env set must Ok");
+	assert_eq!(
+		got.as_str(),
+		"trimmed-from-file",
+		"_FILE path must beat the plain env var"
+	);
 
-    clear_test_env("HELMLY_TEST_LOAD_SECRET");
-    std::fs::remove_file(&path).ok();
+	clear_test_env("HELMLY_TEST_LOAD_SECRET");
+	std::fs::remove_file(&path).ok();
 }
 
 /// Control: `load_secret` Errs when neither env nor `_FILE` is
@@ -398,16 +397,16 @@ fn load_secret_prefers_file_over_env() {
 /// caller so the operator sees which variable is missing.
 #[test]
 fn load_secret_errors_when_neither_source_set() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    clear_test_env("HELMLY_TEST_LOAD_SECRET_MISSING");
+	let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+	clear_test_env("HELMLY_TEST_LOAD_SECRET_MISSING");
 
-    let err = load_secret("HELMLY_TEST_LOAD_SECRET_MISSING")
-        .expect_err("no source must Err with a named context");
-    let msg = format!("{err:#}");
-    assert!(
-        msg.contains("HELMLY_TEST_LOAD_SECRET_MISSING required"),
-        "Err message must name the missing env var; got: {msg}"
-    );
+	let err = load_secret("HELMLY_TEST_LOAD_SECRET_MISSING")
+		.expect_err("no source must Err with a named context");
+	let msg = format!("{err:#}");
+	assert!(
+		msg.contains("HELMLY_TEST_LOAD_SECRET_MISSING required"),
+		"Err message must name the missing env var; got: {msg}"
+	);
 }
 
 /// Control: `load_secret_opt` falls through silently when neither
@@ -415,13 +414,13 @@ fn load_secret_errors_when_neither_source_set() {
 /// Distinct from `load_secret`'s Err-on-missing contract.
 #[test]
 fn load_secret_opt_returns_none_when_neither_source_set() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    clear_test_env("HELMLY_TEST_LOAD_SECRET_OPT");
+	let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+	clear_test_env("HELMLY_TEST_LOAD_SECRET_OPT");
 
-    assert!(
-        load_secret_opt("HELMLY_TEST_LOAD_SECRET_OPT").is_none(),
-        "missing env + missing _FILE = None"
-    );
+	assert!(
+		load_secret_opt("HELMLY_TEST_LOAD_SECRET_OPT").is_none(),
+		"missing env + missing _FILE = None"
+	);
 }
 
 /// Control: `load_secret_opt` reads the env var when set and
@@ -429,13 +428,13 @@ fn load_secret_opt_returns_none_when_neither_source_set() {
 /// distinct from `load_secret`'s Err-on-missing.
 #[test]
 fn load_secret_opt_returns_some_when_env_set() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    set_test_env("HELMLY_TEST_LOAD_SECRET_OPT", "sync-token-value");
+	let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+	set_test_env("HELMLY_TEST_LOAD_SECRET_OPT", "sync-token-value");
 
-    let got = load_secret_opt("HELMLY_TEST_LOAD_SECRET_OPT").expect("env-set must produce Some(_)");
-    assert_eq!(got.as_str(), "sync-token-value");
+	let got = load_secret_opt("HELMLY_TEST_LOAD_SECRET_OPT").expect("env-set must produce Some(_)");
+	assert_eq!(got.as_str(), "sync-token-value");
 
-    clear_test_env("HELMLY_TEST_LOAD_SECRET_OPT");
+	clear_test_env("HELMLY_TEST_LOAD_SECRET_OPT");
 }
 
 /// Control: `load_der_file_opt` reads DER bytes from disk when
@@ -443,20 +442,20 @@ fn load_secret_opt_returns_some_when_env_set() {
 /// the file is missing. Used for TLS certs.
 #[test]
 fn load_der_file_opt_reads_bytes_when_path_readable() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    clear_test_env("HELMLY_TEST_TLS_CERT_DER_FILE");
+	let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+	clear_test_env("HELMLY_TEST_TLS_CERT_DER_FILE");
 
-    let path = temp_path("tls-cert-der");
-    let bytes = vec![0x30u8, 0x82, 0x01, 0x02, 0xDE, 0xAD, 0xBE, 0xEF];
-    std::fs::write(&path, &bytes).expect("write cert bytes");
-    std::env::set_var("HELMLY_TEST_TLS_CERT_DER_FILE", &path);
+	let path = temp_path("tls-cert-der");
+	let bytes = vec![0x30u8, 0x82, 0x01, 0x02, 0xDE, 0xAD, 0xBE, 0xEF];
+	std::fs::write(&path, &bytes).expect("write cert bytes");
+	std::env::set_var("HELMLY_TEST_TLS_CERT_DER_FILE", &path);
 
-    let got = load_der_file_opt("HELMLY_TEST_TLS_CERT_DER_FILE")
-        .expect("readable file must produce Some(_)");
-    assert_eq!(got, bytes, "DER bytes must round-trip exactly");
+	let got = load_der_file_opt("HELMLY_TEST_TLS_CERT_DER_FILE")
+		.expect("readable file must produce Some(_)");
+	assert_eq!(got, bytes, "DER bytes must round-trip exactly");
 
-    clear_test_env("HELMLY_TEST_TLS_CERT_DER_FILE");
-    std::fs::remove_file(&path).ok();
+	clear_test_env("HELMLY_TEST_TLS_CERT_DER_FILE");
+	std::fs::remove_file(&path).ok();
 }
 
 /// Control: `load_der_file_zeroize_opt` wraps the same bytes in a
@@ -464,24 +463,24 @@ fn load_der_file_opt_reads_bytes_when_path_readable() {
 /// contents are identical; the safety contract differs.
 #[test]
 fn load_der_file_zeroize_opt_wraps_inner_bytes() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    clear_test_env("HELMLY_TEST_TLS_KEY_DER_FILE");
+	let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+	clear_test_env("HELMLY_TEST_TLS_KEY_DER_FILE");
 
-    let path = temp_path("tls-key-der");
-    let bytes = vec![0x30u8, 0x82, 0x02, 0x01, 0xC0, 0xFF, 0xEE];
-    std::fs::write(&path, &bytes).expect("write key bytes");
-    std::env::set_var("HELMLY_TEST_TLS_KEY_DER_FILE", &path);
+	let path = temp_path("tls-key-der");
+	let bytes = vec![0x30u8, 0x82, 0x02, 0x01, 0xC0, 0xFF, 0xEE];
+	std::fs::write(&path, &bytes).expect("write key bytes");
+	std::env::set_var("HELMLY_TEST_TLS_KEY_DER_FILE", &path);
 
-    let got = load_der_file_zeroize_opt("HELMLY_TEST_TLS_KEY_DER_FILE")
-        .expect("readable file must produce Some(_)");
-    assert_eq!(
-        got.as_slice(),
-        bytes.as_slice(),
-        "Zeroizing wrapper must hold the same bytes"
-    );
+	let got = load_der_file_zeroize_opt("HELMLY_TEST_TLS_KEY_DER_FILE")
+		.expect("readable file must produce Some(_)");
+	assert_eq!(
+		got.as_slice(),
+		bytes.as_slice(),
+		"Zeroizing wrapper must hold the same bytes"
+	);
 
-    clear_test_env("HELMLY_TEST_TLS_KEY_DER_FILE");
-    std::fs::remove_file(&path).ok();
+	clear_test_env("HELMLY_TEST_TLS_KEY_DER_FILE");
+	std::fs::remove_file(&path).ok();
 }
 
 // ---- 5. Public entry: env-set tries to seed-on-load (fails in tests,
@@ -497,23 +496,23 @@ fn load_der_file_zeroize_opt_wraps_inner_bytes() {
 #[cfg(unix)] // seed-on-load uses Unix mode 0o600; skip on non-Unix.
 #[test]
 fn env_set_in_public_loader_attempts_seed_with_msg() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    clear_dashboard_env();
+	let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+	clear_dashboard_env();
 
-    let key = [0xAAu8; 32];
-    std::env::set_var("DASHBOARD_VERIFY_KEY", b64(&key));
-    let result = load_dashboard_keyring();
-    let msg = match &result {
-        Err(e) => format!("{e:#}"),
-        Ok(ring) => panic!(
-            "seed-on-load must Err against non-root test env; got Ok with len={}",
-            ring.len()
-        ),
-    };
-    assert!(
-        msg.contains("seed") || msg.contains("permission") || msg.contains("create"),
-        "err must come from the seed-write step (seed/open/rename/create); got: {msg}"
-    );
+	let key = [0xAAu8; 32];
+	std::env::set_var("DASHBOARD_VERIFY_KEY", b64(&key));
+	let result = load_dashboard_keyring();
+	let msg = match &result {
+		Err(e) => format!("{e:#}"),
+		Ok(ring) => panic!(
+			"seed-on-load must Err against non-root test env; got Ok with len={}",
+			ring.len()
+		),
+	};
+	assert!(
+		msg.contains("seed") || msg.contains("permission") || msg.contains("create"),
+		"err must come from the seed-write step (seed/open/rename/create); got: {msg}"
+	);
 
-    clear_dashboard_env();
+	clear_dashboard_env();
 }

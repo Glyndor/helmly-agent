@@ -22,36 +22,36 @@ use super::*;
 /// helper-level tests below are sync — they don't touch the pool.
 #[tokio::test]
 async fn auth_state_helper_has_expected_internal_token() {
-    let state = make_state();
-    // Round-trip through the public handler's read path.
-    let h = headers_with_auth("Bearer test-token");
-    assert!(
-        authorize_metrics_ws(&h, &state.config.internal_token),
-        "make_state() must wire the token the tests expect"
-    );
+	let state = make_state();
+	// Round-trip through the public handler's read path.
+	let h = headers_with_auth("Bearer test-token");
+	assert!(
+		authorize_metrics_ws(&h, &state.config.internal_token),
+		"make_state() must wire the token the tests expect"
+	);
 }
 
 /// Missing header → token collapses to `""` → fails `verify_bearer`.
 #[test]
 fn auth_no_authorization_header_rejects() {
-    let h = HeaderMap::new();
-    assert!(!authorize_metrics_ws(&h, "test-token"));
+	let h = HeaderMap::new();
+	assert!(!authorize_metrics_ws(&h, "test-token"));
 }
 
 /// The happy path — the helper reaches the Ok branch the production
 /// handler requires before allowing the WebSocket upgrade.
 #[test]
 fn auth_valid_bearer_token_accepts() {
-    let h = headers_with_auth("Bearer test-token");
-    assert!(authorize_metrics_ws(&h, "test-token"));
+	let h = headers_with_auth("Bearer test-token");
+	assert!(authorize_metrics_ws(&h, "test-token"));
 }
 
 /// Wrong token — the constant-time compare in `verify_bearer`
 /// returns false for any non-bytewise-identical input.
 #[test]
 fn auth_wrong_token_rejects() {
-    let h = headers_with_auth("Bearer wrong-token");
-    assert!(!authorize_metrics_ws(&h, "test-token"));
+	let h = headers_with_auth("Bearer wrong-token");
+	assert!(!authorize_metrics_ws(&h, "test-token"));
 }
 
 /// A scheme other than `Bearer ` (note: stripping requires the
@@ -61,18 +61,18 @@ fn auth_wrong_token_rejects() {
 /// the token.
 #[test]
 fn auth_non_bearer_scheme_rejects_as_empty_token() {
-    let h = headers_with_auth("NotBearer foo");
-    assert!(!authorize_metrics_ws(&h, "test-token"));
+	let h = headers_with_auth("NotBearer foo");
+	assert!(!authorize_metrics_ws(&h, "test-token"));
 }
 
 /// Header is exactly `"Bearer "` (trailing space, no token).
 #[test]
 fn auth_bearer_with_empty_suffix_rejects() {
-    let h = headers_with_auth("Bearer ");
-    assert!(
-        !authorize_metrics_ws(&h, "test-token"),
-        "empty token must reject (constant-time length-check)"
-    );
+	let h = headers_with_auth("Bearer ");
+	assert!(
+		!authorize_metrics_ws(&h, "test-token"),
+		"empty token must reject (constant-time length-check)"
+	);
 }
 
 /// `"Bearer"` followed by the token with NO space in between.
@@ -81,8 +81,8 @@ fn auth_bearer_with_empty_suffix_rejects() {
 /// space is required.
 #[test]
 fn auth_bearer_without_space_treated_as_missing_prefix() {
-    let h = headers_with_auth("Bearertest-token");
-    assert!(!authorize_metrics_ws(&h, "test-token"));
+	let h = headers_with_auth("Bearertest-token");
+	assert!(!authorize_metrics_ws(&h, "test-token"));
 }
 
 /// Non-UTF8 header bytes — `to_str()` returns `Err`, the chain
@@ -90,13 +90,13 @@ fn auth_bearer_without_space_treated_as_missing_prefix() {
 /// Asserts that the helper panics-free for hostile input.
 #[test]
 fn auth_non_utf8_header_value_rejects_without_panic() {
-    let mut h = HeaderMap::new();
-    // 0xff/0xfe are not valid UTF-8 start bytes.
-    h.insert(
-        AUTHORIZATION,
-        HeaderValue::from_bytes(&[0xff, 0xfe]).unwrap(),
-    );
-    assert!(!authorize_metrics_ws(&h, "test-token"));
+	let mut h = HeaderMap::new();
+	// 0xff/0xfe are not valid UTF-8 start bytes.
+	h.insert(
+		AUTHORIZATION,
+		HeaderValue::from_bytes(&[0xff, 0xfe]).unwrap(),
+	);
+	assert!(!authorize_metrics_ws(&h, "test-token"));
 }
 
 /// Empty header value → empty token → fails `verify_bearer`
@@ -104,8 +104,8 @@ fn auth_non_utf8_header_value_rejects_without_panic() {
 /// pre-check, no panic).
 #[test]
 fn auth_empty_header_value_does_not_match_nonempty_token() {
-    let h = headers_with_auth("");
-    assert!(!authorize_metrics_ws(&h, "test-token"));
+	let h = headers_with_auth("");
+	assert!(!authorize_metrics_ws(&h, "test-token"));
 }
 
 /// Sanity for `verify_bearer("", "")` — the only way the helper
@@ -116,6 +116,6 @@ fn auth_empty_header_value_does_not_match_nonempty_token() {
 /// empty-vs-nonempty boundary here.
 #[test]
 fn auth_empty_value_matches_only_when_expected_is_empty() {
-    let h = headers_with_auth("");
-    assert!(!authorize_metrics_ws(&h, "nonempty"));
+	let h = headers_with_auth("");
+	assert!(!authorize_metrics_ws(&h, "nonempty"));
 }

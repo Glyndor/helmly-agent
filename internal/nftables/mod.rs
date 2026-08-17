@@ -11,85 +11,85 @@ const TABLE: &str = "helmly-agent";
 /// helmly-global / helmly-local hold dashboard-pushed input rules.
 /// helmly-global-output / helmly-local-output hold dashboard-pushed output rules.
 pub struct Ruleset {
-    /// WireGuard UDP port for management plane
-    pub wireguard_port: u16,
-    /// Dashboard panel port opened in helmly-base (Some(19443) on dashboard VPS, None on remote agents).
-    pub dashboard_port: Option<u16>,
-    /// Per-org blocked subnets (org isolation — inter-org traffic blocked)
-    pub org_networks: Vec<OrgNetwork>,
-    /// Input rules body for the helmly-global chain (dashboard-pushed, applies to all agents)
-    pub global_body: String,
-    /// Input rules body for the helmly-local chain (dashboard-pushed, this agent only)
-    pub local_body: String,
-    /// Output rules body for the helmly-global-output chain (dashboard-pushed, applies to all agents)
-    pub global_output_body: String,
-    /// Output rules body for the helmly-local-output chain (dashboard-pushed, this agent only)
-    pub local_output_body: String,
-    /// Dashboard WireGuard IP for source-IP restriction on the WG inbound rule.
-    /// Some(ip) on remote agents — restricts `udp dport {wg}` to that source only.
-    /// None on the dashboard VPS itself (accepts from all agent IPs) or when unknown.
-    pub dashboard_wg_ip: Option<String>,
+	/// WireGuard UDP port for management plane
+	pub wireguard_port: u16,
+	/// Dashboard panel port opened in helmly-base (Some(19443) on dashboard VPS, None on remote agents).
+	pub dashboard_port: Option<u16>,
+	/// Per-org blocked subnets (org isolation — inter-org traffic blocked)
+	pub org_networks: Vec<OrgNetwork>,
+	/// Input rules body for the helmly-global chain (dashboard-pushed, applies to all agents)
+	pub global_body: String,
+	/// Input rules body for the helmly-local chain (dashboard-pushed, this agent only)
+	pub local_body: String,
+	/// Output rules body for the helmly-global-output chain (dashboard-pushed, applies to all agents)
+	pub global_output_body: String,
+	/// Output rules body for the helmly-local-output chain (dashboard-pushed, this agent only)
+	pub local_output_body: String,
+	/// Dashboard WireGuard IP for source-IP restriction on the WG inbound rule.
+	/// Some(ip) on remote agents — restricts `udp dport {wg}` to that source only.
+	/// None on the dashboard VPS itself (accepts from all agent IPs) or when unknown.
+	pub dashboard_wg_ip: Option<String>,
 }
 
 pub struct OrgNetwork {
-    pub org_id: String,
-    pub subnet: String,
+	pub org_id: String,
+	pub subnet: String,
 }
 
 /// Extract the host from a URL like "http://10.100.0.1:8080".
 /// Returns None for empty input or unparseable URLs.
 pub fn extract_url_host(url: &str) -> Option<String> {
-    if url.is_empty() {
-        return None;
-    }
-    let after_scheme = url.split("//").nth(1).unwrap_or(url);
-    // IPv6 addresses are wrapped in brackets: [::1]:port
-    let host = if after_scheme.starts_with('[') {
-        after_scheme
-            .find(']')
-            .map(|i| &after_scheme[..=i])
-            .unwrap_or(after_scheme)
-    } else {
-        after_scheme.split(':').next().unwrap_or(after_scheme)
-    };
-    if host.is_empty() {
-        None
-    } else {
-        Some(host.to_string())
-    }
+	if url.is_empty() {
+		return None;
+	}
+	let after_scheme = url.split("//").nth(1).unwrap_or(url);
+	// IPv6 addresses are wrapped in brackets: [::1]:port
+	let host = if after_scheme.starts_with('[') {
+		after_scheme
+			.find(']')
+			.map(|i| &after_scheme[..=i])
+			.unwrap_or(after_scheme)
+	} else {
+		after_scheme.split(':').next().unwrap_or(after_scheme)
+	};
+	if host.is_empty() {
+		None
+	} else {
+		Some(host.to_string())
+	}
 }
 
 /// Apply the full helmly-agent nftables ruleset atomically.
 /// Replaces the entire table on every call — never incremental.
 /// Returns the rendered ruleset string so callers can store it for restore.
 pub fn apply(ruleset: &Ruleset) -> Result<String> {
-    let nft = render_ruleset(ruleset);
-    run_nft(&nft).context("nftables apply")?;
-    persist_ruleset(&nft);
-    Ok(nft)
+	let nft = render_ruleset(ruleset);
+	run_nft(&nft).context("nftables apply")?;
+	persist_ruleset(&nft);
+	Ok(nft)
 }
 
 /// Re-apply a previously rendered ruleset string directly (used for restore).
 pub fn apply_raw(nft: &str) -> Result<()> {
-    run_nft(nft).context("nftables apply_raw")?;
-    persist_ruleset(nft);
-    Ok(())
+	run_nft(nft).context("nftables apply_raw")?;
+	persist_ruleset(nft);
+	Ok(())
 }
 
 /// Apply a minimal emergency ruleset when normal restore fails.
 /// Allows only WireGuard inbound from the dashboard + established + loopback.
 /// Everything else dropped — VPS stays reachable only from dashboard.
 pub fn apply_emergency() -> Result<()> {
-    run_nft(EMERGENCY_RULESET).context("nftables apply_emergency")?;
-    persist_ruleset(EMERGENCY_RULESET);
-    Ok(())
+	run_nft(EMERGENCY_RULESET).context("nftables apply_emergency")?;
+	persist_ruleset(EMERGENCY_RULESET);
+	Ok(())
 }
 
 /// Persist the active ruleset to disk so nftables.service can reload it on boot.
 fn persist_ruleset(nft: &str) {
-    if let Err(e) = std::fs::write("/etc/nftables-helmly-agent.conf", nft) {
-        tracing::warn!(error = %e, "failed to persist nftables ruleset to disk");
-    }
+	if let Err(e) = std::fs::write("/etc/nftables-helmly-agent.conf", nft) {
+		tracing::warn!(error = %e, "failed to persist nftables ruleset to disk");
+	}
 }
 
 const EMERGENCY_RULESET: &str = r#"
@@ -114,87 +114,87 @@ table inet helmly-agent {
 
 /// Compute checksum of the live helmly-agent table for divergence detection.
 pub fn current_checksum() -> Result<String> {
-    chain_checksum_raw(&["list", "table", "inet", TABLE])
+	chain_checksum_raw(&["list", "table", "inet", TABLE])
 }
 
 /// Compute checksum of a single chain for per-chain divergence detection.
 pub fn chain_checksum(chain: &str) -> Result<String> {
-    chain_checksum_raw(&["list", "chain", "inet", TABLE, chain])
+	chain_checksum_raw(&["list", "chain", "inet", TABLE, chain])
 }
 
 fn chain_checksum_raw(args: &[&str]) -> Result<String> {
-    // -t (terse) suppresses dynamic set/meter element output so the checksum
-    // reflects only rule structure — prevents false divergence from ssh_throttle
-    // meter filling up with per-IP rate-limit entries during normal operation.
-    let out = Command::new("nft")
-        .arg("-j")
-        .arg("-t")
-        .args(args)
-        .output()
-        .context("nft list")?;
+	// -t (terse) suppresses dynamic set/meter element output so the checksum
+	// reflects only rule structure — prevents false divergence from ssh_throttle
+	// meter filling up with per-IP rate-limit entries during normal operation.
+	let out = Command::new("nft")
+		.arg("-j")
+		.arg("-t")
+		.args(args)
+		.output()
+		.context("nft list")?;
 
-    if !out.status.success() {
-        anyhow::bail!("nft list failed: {}", String::from_utf8_lossy(&out.stderr));
-    }
+	if !out.status.success() {
+		anyhow::bail!("nft list failed: {}", String::from_utf8_lossy(&out.stderr));
+	}
 
-    let mut hasher = Sha256::new();
-    hasher.update(&out.stdout);
-    Ok(hex::encode(hasher.finalize()))
+	let mut hasher = Sha256::new();
+	hasher.update(&out.stdout);
+	Ok(hex::encode(hasher.finalize()))
 }
 
 fn render_ruleset(r: &Ruleset) -> String {
-    let dashboard_port_rule = match r.dashboard_port {
-        Some(port) => format!(
-            "\n        # Dashboard panel port\n        tcp dport {port} ct state new accept\n"
-        ),
-        None => String::new(),
-    };
+	let dashboard_port_rule = match r.dashboard_port {
+		Some(port) => format!(
+			"\n        # Dashboard panel port\n        tcp dport {port} ct state new accept\n"
+		),
+		None => String::new(),
+	};
 
-    // Management plane rules — dashboard VPS only.
-    // Agents (10.100.0.x) need to reach the backend on port 8080; agent-to-agent
-    // traffic within the management subnet must be blocked; and the dashboard itself
-    // (10.100.0.1) is allowed unconditionally on its own WireGuard interface.
-    let management_plane_rules = if r.dashboard_port.is_some() {
-        "\n        # Allow agents -> dashboard backend (management plane)\n        ip saddr 10.100.0.0/16 ip daddr 10.100.0.1 tcp dport 8080 ct state new accept\n\n        # Block agent-to-agent traffic within management subnet\n        ip saddr 10.100.0.0/16 ip daddr 10.100.0.0/16 drop\n\n        # Dashboard WireGuard interface can reach itself\n        ip saddr 10.100.0.1 accept\n".to_string()
-    } else {
-        String::new()
-    };
+	// Management plane rules — dashboard VPS only.
+	// Agents (10.100.0.x) need to reach the backend on port 8080; agent-to-agent
+	// traffic within the management subnet must be blocked; and the dashboard itself
+	// (10.100.0.1) is allowed unconditionally on its own WireGuard interface.
+	let management_plane_rules = if r.dashboard_port.is_some() {
+		"\n        # Allow agents -> dashboard backend (management plane)\n        ip saddr 10.100.0.0/16 ip daddr 10.100.0.1 tcp dport 8080 ct state new accept\n\n        # Block agent-to-agent traffic within management subnet\n        ip saddr 10.100.0.0/16 ip daddr 10.100.0.0/16 drop\n\n        # Dashboard WireGuard interface can reach itself\n        ip saddr 10.100.0.1 accept\n".to_string()
+	} else {
+		String::new()
+	};
 
-    // Container DNS (aardvark-dns on Netavark bridges) — dashboard VPS only.
-    // Rootless org containers on remote agents use user-namespace networking
-    // that doesn't hit the host INPUT chain for DNS.
-    let dashboard_dns_rules = if r.dashboard_port.is_some() {
-        "\n        # DNS for container networks (aardvark-dns on Netavark bridge interfaces)\n        iifname \"podman*\" udp dport 53 accept\n        iifname \"podman*\" tcp dport 53 accept\n"
-    } else {
-        ""
-    };
+	// Container DNS (aardvark-dns on Netavark bridges) — dashboard VPS only.
+	// Rootless org containers on remote agents use user-namespace networking
+	// that doesn't hit the host INPUT chain for DNS.
+	let dashboard_dns_rules = if r.dashboard_port.is_some() {
+		"\n        # DNS for container networks (aardvark-dns on Netavark bridge interfaces)\n        iifname \"podman*\" udp dport 53 accept\n        iifname \"podman*\" tcp dport 53 accept\n"
+	} else {
+		""
+	};
 
-    // Netavark DNAT rewrites the destination from the host IP to the container IP
-    // (10.89.x.x) in PREROUTING. Without a forward rule, helmly-forward policy drop
-    // kills these packets before they reach the container. This applies to ALL agents:
-    // the agent's own PostgreSQL container is also published via DNAT.
-    let container_forward_rules = "\n        # New connections to published container ports (Netavark DNAT rewrites dst to 10.89.x.x)\n        ip daddr 10.89.0.0/16 ct state new accept\n\n        # Outbound traffic from Podman containers (package installs, GitHub, cert renewals, etc.)\n        iifname \"podman*\" accept\n";
+	// Netavark DNAT rewrites the destination from the host IP to the container IP
+	// (10.89.x.x) in PREROUTING. Without a forward rule, helmly-forward policy drop
+	// kills these packets before they reach the container. This applies to ALL agents:
+	// the agent's own PostgreSQL container is also published via DNAT.
+	let container_forward_rules = "\n        # New connections to published container ports (Netavark DNAT rewrites dst to 10.89.x.x)\n        ip daddr 10.89.0.0/16 ct state new accept\n\n        # Outbound traffic from Podman containers (package installs, GitHub, cert renewals, etc.)\n        iifname \"podman*\" accept\n";
 
-    // WireGuard forward rules — dashboard VPS only.
-    // Backend container needs to route through wg-helmly-dash to reach remote agents.
-    let dashboard_wg_forward_rules = if r.dashboard_port.is_some() {
-        "\n        # Backend container traffic to/from WireGuard (dashboard <-> agents)\n        oifname \"wg-helmly-dash\" accept\n        iifname \"wg-helmly-dash\" accept\n"
-    } else {
-        ""
-    };
+	// WireGuard forward rules — dashboard VPS only.
+	// Backend container needs to route through wg-helmly-dash to reach remote agents.
+	let dashboard_wg_forward_rules = if r.dashboard_port.is_some() {
+		"\n        # Backend container traffic to/from WireGuard (dashboard <-> agents)\n        oifname \"wg-helmly-dash\" accept\n        iifname \"wg-helmly-dash\" accept\n"
+	} else {
+		""
+	};
 
-    // On remote agents, restrict WG inbound to dashboard IP only.
-    // On the dashboard VPS (dashboard_port.is_some()), all agent IPs must be accepted.
-    let wg_rule = match (r.dashboard_port.is_some(), &r.dashboard_wg_ip) {
-        (true, _) | (false, None) => format!("        udp dport {} accept", r.wireguard_port),
-        (false, Some(ip)) => format!(
-            "        ip saddr {ip} udp dport {} accept",
-            r.wireguard_port
-        ),
-    };
+	// On remote agents, restrict WG inbound to dashboard IP only.
+	// On the dashboard VPS (dashboard_port.is_some()), all agent IPs must be accepted.
+	let wg_rule = match (r.dashboard_port.is_some(), &r.dashboard_wg_ip) {
+		(true, _) | (false, None) => format!("        udp dport {} accept", r.wireguard_port),
+		(false, Some(ip)) => format!(
+			"        ip saddr {ip} udp dport {} accept",
+			r.wireguard_port
+		),
+	};
 
-    let mut out = format!(
-        r#"
+	let mut out = format!(
+		r#"
 destroy table inet {TABLE}
 add table inet {TABLE}
 table inet {TABLE} {{
@@ -246,26 +246,26 @@ table inet {TABLE} {{
 {container_forward}
 {dashboard_wg_forward}
 "#,
-        TABLE = TABLE,
-        management_plane = management_plane_rules,
-        dashboard_port = dashboard_port_rule,
-        dashboard_dns = dashboard_dns_rules,
-        container_forward = container_forward_rules,
-        dashboard_wg_forward = dashboard_wg_forward_rules,
-        global = r.global_body,
-        local = r.local_body,
-    );
+		TABLE = TABLE,
+		management_plane = management_plane_rules,
+		dashboard_port = dashboard_port_rule,
+		dashboard_dns = dashboard_dns_rules,
+		container_forward = container_forward_rules,
+		dashboard_wg_forward = dashboard_wg_forward_rules,
+		global = r.global_body,
+		local = r.local_body,
+	);
 
-    // Block inter-org traffic
-    for org in &r.org_networks {
-        out.push_str(&format!(
-            "        # org {} isolation\n        ip saddr {} ip daddr != {} drop;\n",
-            org.org_id, org.subnet, org.subnet
-        ));
-    }
+	// Block inter-org traffic
+	for org in &r.org_networks {
+		out.push_str(&format!(
+			"        # org {} isolation\n        ip saddr {} ip daddr != {} drop;\n",
+			org.org_id, org.subnet, org.subnet
+		));
+	}
 
-    out.push_str(&format!(
-        r#"    }}
+	out.push_str(&format!(
+		r#"    }}
 
     chain helmly-output {{
         type filter hook output priority 0; policy accept;
@@ -278,33 +278,33 @@ table inet {TABLE} {{
     }}
 }}
 "#,
-        global_out = r.global_output_body,
-        local_out = r.local_output_body,
-    ));
+		global_out = r.global_output_body,
+		local_out = r.local_output_body,
+	));
 
-    out
+	out
 }
 
 fn run_nft(ruleset: &str) -> Result<()> {
-    let mut child = Command::new("nft")
-        .args(["-f", "-"])
-        .stdin(std::process::Stdio::piped())
-        .spawn()
-        .context("spawn nft")?;
+	let mut child = Command::new("nft")
+		.args(["-f", "-"])
+		.stdin(std::process::Stdio::piped())
+		.spawn()
+		.context("spawn nft")?;
 
-    use std::io::Write;
-    if let Some(stdin) = child.stdin.take() {
-        let mut stdin = stdin;
-        stdin
-            .write_all(ruleset.as_bytes())
-            .context("write nft stdin")?;
-    }
+	use std::io::Write;
+	if let Some(stdin) = child.stdin.take() {
+		let mut stdin = stdin;
+		stdin
+			.write_all(ruleset.as_bytes())
+			.context("write nft stdin")?;
+	}
 
-    let status = child.wait().context("wait nft")?;
-    if !status.success() {
-        anyhow::bail!("nft exited with: {status}");
-    }
-    Ok(())
+	let status = child.wait().context("wait nft")?;
+	if !status.success() {
+		anyhow::bail!("nft exited with: {status}");
+	}
+	Ok(())
 }
 
 #[cfg(test)]

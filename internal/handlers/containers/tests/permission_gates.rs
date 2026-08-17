@@ -21,20 +21,20 @@ use super::*;
 /// would break the dashboard's read-only tenant view.
 #[tokio::test]
 async fn container_list_has_no_permission_gate() {
-    let cmd = make_cmd(
-        PermissionLevel::Read,
-        json!({ "type": "container.list", "tenant_id": "valid-org" }),
-    );
-    // Don't assert Ok — `podman::list_containers` would fail in a
-    // unit-test environment (no podman binary, no tenant user) — but
-    // the error must NOT be `Forbidden`. Adding
-    // `if permission == Read { Err(Forbidden) }` here would surface
-    // as `Forbidden(_)` and this test fails.
-    if let Err(AgentError::Forbidden(msg)) = handle_container_list(&cmd) {
-        panic!(
-            "container.list has no permission gate; Read must pass through; got Forbidden({msg})"
-        )
-    }
+	let cmd = make_cmd(
+		PermissionLevel::Read,
+		json!({ "type": "container.list", "tenant_id": "valid-org" }),
+	);
+	// Don't assert Ok — `podman::list_containers` would fail in a
+	// unit-test environment (no podman binary, no tenant user) — but
+	// the error must NOT be `Forbidden`. Adding
+	// `if permission == Read { Err(Forbidden) }` here would surface
+	// as `Forbidden(_)` and this test fails.
+	if let Err(AgentError::Forbidden(msg)) = handle_container_list(&cmd) {
+		panic!(
+			"container.list has no permission gate; Read must pass through; got Forbidden({msg})"
+		)
+	}
 }
 
 /// `tenant.ensure` creates the `helmly-tenant-{id}` system user
@@ -44,19 +44,19 @@ async fn container_list_has_no_permission_gate() {
 /// else makes Read pass through.
 #[tokio::test]
 async fn tenant_ensure_read_permission_is_forbidden() {
-    let cmd = make_cmd(
-        PermissionLevel::Read,
-        json!({ "type": "tenant.ensure", "tenant_id": "valid-org" }),
-    );
-    match handle_tenant_ensure(&cmd) {
-        Err(AgentError::Forbidden(msg)) => assert_eq!(
-            msg, "tenant.ensure requires write permission",
-            "Forbidden message must match the gate's exact text"
-        ),
-        other => {
-            panic!("expected Forbidden(\"tenant.ensure requires write permission\"); got {other:?}")
-        }
-    }
+	let cmd = make_cmd(
+		PermissionLevel::Read,
+		json!({ "type": "tenant.ensure", "tenant_id": "valid-org" }),
+	);
+	match handle_tenant_ensure(&cmd) {
+		Err(AgentError::Forbidden(msg)) => assert_eq!(
+			msg, "tenant.ensure requires write permission",
+			"Forbidden message must match the gate's exact text"
+		),
+		other => {
+			panic!("expected Forbidden(\"tenant.ensure requires write permission\"); got {other:?}")
+		}
+	}
 }
 
 /// `container.deploy` writes the compose file and runs
@@ -67,25 +67,25 @@ async fn tenant_ensure_read_permission_is_forbidden() {
 /// `podman::compose_deploy`, not a confusing `BadRequest`.
 #[tokio::test]
 async fn container_deploy_read_permission_is_forbidden() {
-    let state = make_state();
-    let cmd = make_cmd(
-        PermissionLevel::Read,
-        json!({
-            "type": "container.deploy",
-            "tenant_id": "valid-org",
-            "project_id": "valid-proj",
-            "compose_yaml": "services: {}\n",
-        }),
-    );
-    match handle_container_deploy(&state, &cmd).await {
-        Err(AgentError::Forbidden(msg)) => assert_eq!(
-            msg, "container.deploy requires write permission",
-            "Forbidden message must match the gate's exact text"
-        ),
-        other => panic!(
-            "expected Forbidden(\"container.deploy requires write permission\"); got {other:?}"
-        ),
-    }
+	let state = make_state();
+	let cmd = make_cmd(
+		PermissionLevel::Read,
+		json!({
+			"type": "container.deploy",
+			"tenant_id": "valid-org",
+			"project_id": "valid-proj",
+			"compose_yaml": "services: {}\n",
+		}),
+	);
+	match handle_container_deploy(&state, &cmd).await {
+		Err(AgentError::Forbidden(msg)) => assert_eq!(
+			msg, "container.deploy requires write permission",
+			"Forbidden message must match the gate's exact text"
+		),
+		other => panic!(
+			"expected Forbidden(\"container.deploy requires write permission\"); got {other:?}"
+		),
+	}
 }
 
 /// `container.start` calls `podman start <name>` as the tenant
@@ -93,46 +93,46 @@ async fn container_deploy_read_permission_is_forbidden() {
 /// must be refused. Mutation target: the `== Read` arm.
 #[tokio::test]
 async fn container_start_read_permission_is_forbidden() {
-    let cmd = make_cmd(
-        PermissionLevel::Read,
-        json!({
-            "type": "container.start",
-            "tenant_id": "valid-org",
-            "name": "valid-name",
-        }),
-    );
-    match handle_container_start(&cmd) {
-        Err(AgentError::Forbidden(msg)) => assert_eq!(
-            msg, "container.start requires write permission",
-            "Forbidden message must match the gate's exact text"
-        ),
-        other => panic!(
-            "expected Forbidden(\"container.start requires write permission\"); got {other:?}"
-        ),
-    }
+	let cmd = make_cmd(
+		PermissionLevel::Read,
+		json!({
+			"type": "container.start",
+			"tenant_id": "valid-org",
+			"name": "valid-name",
+		}),
+	);
+	match handle_container_start(&cmd) {
+		Err(AgentError::Forbidden(msg)) => assert_eq!(
+			msg, "container.start requires write permission",
+			"Forbidden message must match the gate's exact text"
+		),
+		other => panic!(
+			"expected Forbidden(\"container.start requires write permission\"); got {other:?}"
+		),
+	}
 }
 
 /// `container.stop` calls `podman stop --time 10 <name>`. Same
 /// gate shape as `container.start`.
 #[tokio::test]
 async fn container_stop_read_permission_is_forbidden() {
-    let cmd = make_cmd(
-        PermissionLevel::Read,
-        json!({
-            "type": "container.stop",
-            "tenant_id": "valid-org",
-            "name": "valid-name",
-        }),
-    );
-    match handle_container_stop(&cmd) {
-        Err(AgentError::Forbidden(msg)) => assert_eq!(
-            msg, "container.stop requires write permission",
-            "Forbidden message must match the gate's exact text"
-        ),
-        other => panic!(
-            "expected Forbidden(\"container.stop requires write permission\"); got {other:?}"
-        ),
-    }
+	let cmd = make_cmd(
+		PermissionLevel::Read,
+		json!({
+			"type": "container.stop",
+			"tenant_id": "valid-org",
+			"name": "valid-name",
+		}),
+	);
+	match handle_container_stop(&cmd) {
+		Err(AgentError::Forbidden(msg)) => assert_eq!(
+			msg, "container.stop requires write permission",
+			"Forbidden message must match the gate's exact text"
+		),
+		other => panic!(
+			"expected Forbidden(\"container.stop requires write permission\"); got {other:?}"
+		),
+	}
 }
 
 /// `container.update` calls `podman update --cpus=... --memory=...m <name>`.
@@ -140,25 +140,25 @@ async fn container_stop_read_permission_is_forbidden() {
 /// tenant-visible side-effect — Read must be refused.
 #[tokio::test]
 async fn container_update_read_permission_is_forbidden() {
-    let cmd = make_cmd(
-        PermissionLevel::Read,
-        json!({
-            "type": "container.update",
-            "tenant_id": "valid-org",
-            "name": "valid-name",
-            "cpus": 0.5,
-            "memory_mb": 256,
-        }),
-    );
-    match handle_container_update(&cmd) {
-        Err(AgentError::Forbidden(msg)) => assert_eq!(
-            msg, "container.update requires write permission",
-            "Forbidden message must match the gate's exact text"
-        ),
-        other => panic!(
-            "expected Forbidden(\"container.update requires write permission\"); got {other:?}"
-        ),
-    }
+	let cmd = make_cmd(
+		PermissionLevel::Read,
+		json!({
+			"type": "container.update",
+			"tenant_id": "valid-org",
+			"name": "valid-name",
+			"cpus": 0.5,
+			"memory_mb": 256,
+		}),
+	);
+	match handle_container_update(&cmd) {
+		Err(AgentError::Forbidden(msg)) => assert_eq!(
+			msg, "container.update requires write permission",
+			"Forbidden message must match the gate's exact text"
+		),
+		other => panic!(
+			"expected Forbidden(\"container.update requires write permission\"); got {other:?}"
+		),
+	}
 }
 
 /// `container.remove` calls `podman rm [--force] <name>` — the
@@ -168,15 +168,15 @@ async fn container_update_read_permission_is_forbidden() {
 /// Destructive — Read would then pass and this test fails.
 #[tokio::test]
 async fn container_remove_read_permission_is_forbidden() {
-    let cmd = make_cmd(
-        PermissionLevel::Read,
-        json!({
-            "type": "container.remove",
-            "tenant_id": "valid-org",
-            "name": "valid-name",
-        }),
-    );
-    match handle_container_remove(&cmd) {
+	let cmd = make_cmd(
+		PermissionLevel::Read,
+		json!({
+			"type": "container.remove",
+			"tenant_id": "valid-org",
+			"name": "valid-name",
+		}),
+	);
+	match handle_container_remove(&cmd) {
             Err(AgentError::Forbidden(msg)) => assert_eq!(
                 msg, "container.remove requires destructive permission",
                 "Forbidden message must match the gate's exact text"
@@ -193,22 +193,22 @@ async fn container_remove_read_permission_is_forbidden() {
 /// gate as `container.remove`. Mutation target: `!= Destructive`.
 #[tokio::test]
 async fn container_down_read_permission_is_forbidden() {
-    let state = make_state();
-    let cmd = make_cmd(
-        PermissionLevel::Read,
-        json!({
-            "type": "container.down",
-            "tenant_id": "valid-org",
-            "project_id": "valid-proj",
-        }),
-    );
-    match handle_container_down(&state, &cmd).await {
-        Err(AgentError::Forbidden(msg)) => assert_eq!(
-            msg, "container.down requires destructive permission",
-            "Forbidden message must match the gate's exact text"
-        ),
-        other => panic!(
-            "expected Forbidden(\"container.down requires destructive permission\"); got {other:?}"
-        ),
-    }
+	let state = make_state();
+	let cmd = make_cmd(
+		PermissionLevel::Read,
+		json!({
+			"type": "container.down",
+			"tenant_id": "valid-org",
+			"project_id": "valid-proj",
+		}),
+	);
+	match handle_container_down(&state, &cmd).await {
+		Err(AgentError::Forbidden(msg)) => assert_eq!(
+			msg, "container.down requires destructive permission",
+			"Forbidden message must match the gate's exact text"
+		),
+		other => panic!(
+			"expected Forbidden(\"container.down requires destructive permission\"); got {other:?}"
+		),
+	}
 }
