@@ -146,9 +146,7 @@ mod tests {
     //! (`system::run_verified_command` → `audit::append`); these
     //! handlers do not call `audit::append` themselves.
 
-    use super::{
-        handle_nftables_accept, handle_nftables_apply, handle_nftables_restore,
-    };
+    use super::{handle_nftables_accept, handle_nftables_apply, handle_nftables_restore};
     use crate::auth::{PermissionLevel, VerifiedCommand};
     use crate::config::Config;
     use crate::error::AgentError;
@@ -236,10 +234,7 @@ mod tests {
         // No `chain` field — full-apply path. The gate must fire
         // before the handler reaches `cmd.command.get("wireguard_port")`
         // or `apply_current_ruleset`.
-        let cmd = make_cmd(
-            PermissionLevel::Read,
-            json!({ "type": "nftables.apply" }),
-        );
+        let cmd = make_cmd(PermissionLevel::Read, json!({ "type": "nftables.apply" }));
 
         match handle_nftables_apply(&state, &cmd).await {
             Err(AgentError::Forbidden(msg)) => assert_eq!(
@@ -259,10 +254,7 @@ mod tests {
     #[tokio::test]
     async fn nftables_restore_read_permission_is_forbidden() {
         let state = make_state();
-        let cmd = make_cmd(
-            PermissionLevel::Read,
-            json!({ "type": "nftables.restore" }),
-        );
+        let cmd = make_cmd(PermissionLevel::Read, json!({ "type": "nftables.restore" }));
 
         match handle_nftables_restore(&state, &cmd) {
             Err(AgentError::Forbidden(msg)) => assert_eq!(
@@ -281,10 +273,7 @@ mod tests {
     #[tokio::test]
     async fn nftables_accept_read_permission_is_forbidden() {
         let state = make_state();
-        let cmd = make_cmd(
-            PermissionLevel::Read,
-            json!({ "type": "nftables.accept" }),
-        );
+        let cmd = make_cmd(PermissionLevel::Read, json!({ "type": "nftables.accept" }));
 
         match handle_nftables_accept(&state, &cmd) {
             Err(AgentError::Forbidden(msg)) => assert_eq!(
@@ -328,9 +317,7 @@ mod tests {
                 msg.contains("unknown chain"),
                 "unknown-chain rejection must surface 'unknown chain'; got: {msg}"
             ),
-            other => panic!(
-                "expected BadRequest(\"unknown chain: ...\"); got {other:?}"
-            ),
+            other => panic!("expected BadRequest(\"unknown chain: ...\"); got {other:?}"),
         }
     }
 
@@ -355,9 +342,9 @@ mod tests {
                 msg, "no ruleset has been applied yet",
                 "missing-ruleset rejection must surface the exact message"
             ),
-            other => panic!(
-                "expected BadRequest(\"no ruleset has been applied yet\"); got {other:?}"
-            ),
+            other => {
+                panic!("expected BadRequest(\"no ruleset has been applied yet\"); got {other:?}")
+            }
         }
     }
 
@@ -496,10 +483,7 @@ mod tests {
         let state = make_state();
         state.set_nft_wg_port(9999);
 
-        let cmd = make_cmd(
-            PermissionLevel::Write,
-            json!({ "type": "nftables.apply" }),
-        );
+        let cmd = make_cmd(PermissionLevel::Write, json!({ "type": "nftables.apply" }));
 
         match handle_nftables_apply(&state, &cmd).await {
             Err(AgentError::Internal(_)) => {}
@@ -559,10 +543,7 @@ mod tests {
         // out at `current_checksum()?` before reaching that line.
         state.set_nft_last_ruleset("table inet helmly-agent {}".into());
 
-        let cmd = make_cmd(
-            PermissionLevel::Write,
-            json!({ "type": "nftables.accept" }),
-        );
+        let cmd = make_cmd(PermissionLevel::Write, json!({ "type": "nftables.accept" }));
 
         match handle_nftables_accept(&state, &cmd) {
             Err(AgentError::Internal(_)) => {} // expected: nft unavailable
