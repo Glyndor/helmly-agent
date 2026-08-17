@@ -190,8 +190,7 @@ fn load_dashboard_keyring_at(path: &Path) -> Result<Zeroizing<Vec<[u8; 32]>>> {
             }
         }
     }
-    let raw = std::fs::read_to_string(path)
-        .with_context(|| format!("read {}", path.display()))?;
+    let raw = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     let mut ring = Zeroizing::new(Vec::with_capacity(2));
     for (idx, line) in raw.lines().enumerate() {
         let trimmed = line.trim();
@@ -389,8 +388,7 @@ mod tests {
         let path = temp_path("malformed-b64");
         write_file_0o600(&path, "!!!not_base64!!!\n");
 
-        let err =
-            load_dashboard_keyring_at(&path).expect_err("non-b64 line must Err at decode");
+        let err = load_dashboard_keyring_at(&path).expect_err("non-b64 line must Err at decode");
         let msg = format!("{err:#}");
         assert!(
             msg.contains("not base64"),
@@ -634,8 +632,7 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         set_test_env("HELMLY_TEST_LOAD_SECRET", "rotated-fallback-env-value");
 
-        let got = load_secret("HELMLY_TEST_LOAD_SECRET")
-            .expect("env-set must produce an Ok(_)");
+        let got = load_secret("HELMLY_TEST_LOAD_SECRET").expect("env-set must produce an Ok(_)");
         assert_eq!(got.as_str(), "rotated-fallback-env-value");
 
         clear_test_env("HELMLY_TEST_LOAD_SECRET");
