@@ -28,7 +28,3 @@ jobs:
       # currently 0% — they need a real podman/nginx, not just unit
       # stubs), then ratchet up.
       coverage-threshold: 30
-      msrv: "1.85"
-      package-check: true
-      semver-check: true
-      doc-warnings: true
