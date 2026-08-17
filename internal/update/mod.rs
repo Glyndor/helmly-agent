@@ -186,7 +186,8 @@ pub(crate) const RELEASE_PUBKEYS: &[[u8; 32]; 2] = &[
     // pin check at `.github/workflows/release.yml:107-111`.)
     [
         0x1c, 0x5b, 0xfb, 0xbe, 0x0e, 0x45, 0x09, 0x8e, 0xd8, 0xc8, 0xa5, 0x03, 0x6c, 0x98, 0x5a,
-        0x41, 0x27, 0xc1, 0xf5, 0x26, 0xe8, 0x24, 0x64, 0x9b, 0x94, 0x9b, 0x45, 0x6c, 0xb9, 0x8b, 0x1f, 0x33,
+        0x41, 0x27, 0xc1, 0xf5, 0x26, 0xe8, 0x24, 0x64, 0x9b, 0x94, 0x9b, 0x45, 0x6c, 0xb9, 0x8b,
+        0x1f, 0x33,
     ],
     // Slot 1: empty (no rotation in flight).
     [0u8; 32],
@@ -197,8 +198,7 @@ pub(crate) const RELEASE_PUBKEYS: &[[u8; 32]; 2] = &[
 /// update-agent.sh, and this file to assert the three agree). The
 /// actual verification path uses `RELEASE_PUBKEYS` above.
 #[allow(dead_code)]
-pub(crate) const RELEASE_VERIFY_KEY_B64: &str =
-    "HFv7vg5FCY7YyKUDbJhaQSfB9SboJGSblJtFbLmLHzM=";
+pub(crate) const RELEASE_VERIFY_KEY_B64: &str = "HFv7vg5FCY7YyKUDbJhaQSfB9SboJGSblJtFbLmLHzM=";
 
 /// Iterate non-zeroed pubkey slots in `keyring` and accept the first
 /// one that verifies. Zeroed slots are skipped. If none verify, fail
@@ -235,9 +235,7 @@ fn verify_signature_with(binary: &[u8], sig_bytes: &[u8], keyring: &[[u8; 32]]) 
         Ok(())
     } else {
         Err(last_err.unwrap_or_else(|| {
-            anyhow::anyhow!(
-                "release signature did not verify against any non-zeroed slot"
-            )
+            anyhow::anyhow!("release signature did not verify against any non-zeroed slot")
         }))
     }
 }
@@ -484,7 +482,10 @@ mod tests {
         let new = ed25519_dalek::SigningKey::from_bytes(&[0x22u8; 32]);
         let binary = b"transition release signed by old";
         let sig = old.sign(binary);
-        let keyring = [old.verifying_key().to_bytes(), new.verifying_key().to_bytes()];
+        let keyring = [
+            old.verifying_key().to_bytes(),
+            new.verifying_key().to_bytes(),
+        ];
         assert!(
             verify_signature_with(binary, &sig.to_bytes(), &keyring).is_ok(),
             "transition release signed by OLD must verify against the [OLD,NEW] ring"
@@ -501,7 +502,10 @@ mod tests {
         let new = ed25519_dalek::SigningKey::from_bytes(&[0x22u8; 32]);
         let binary = b"transition release signed by new";
         let sig = new.sign(binary);
-        let keyring = [old.verifying_key().to_bytes(), new.verifying_key().to_bytes()];
+        let keyring = [
+            old.verifying_key().to_bytes(),
+            new.verifying_key().to_bytes(),
+        ];
         assert!(
             verify_signature_with(binary, &sig.to_bytes(), &keyring).is_ok(),
             "transition release signed by NEW must verify against the [OLD,NEW] ring"
@@ -523,8 +527,7 @@ mod tests {
         let err = r.expect_err("OLD key after cut-over must fail; got Ok");
         let msg = format!("{err:#}");
         assert!(
-            msg.contains("did not verify against slot 0")
-                || msg.contains("no non-zeroed slot"),
+            msg.contains("did not verify against slot 0") || msg.contains("no non-zeroed slot"),
             "rejection must name the cause; got: {msg}"
         );
     }
@@ -540,7 +543,10 @@ mod tests {
         let attacker = ed25519_dalek::SigningKey::from_bytes(&[0x33u8; 32]);
         let binary = b"binary";
         let sig = attacker.sign(binary);
-        let keyring = [old.verifying_key().to_bytes(), new.verifying_key().to_bytes()];
+        let keyring = [
+            old.verifying_key().to_bytes(),
+            new.verifying_key().to_bytes(),
+        ];
         assert!(
             verify_signature_with(binary, &sig.to_bytes(), &keyring).is_err(),
             "forged signature must fail closed"
