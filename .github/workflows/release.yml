@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   ci:
-    uses: Glyndor/.github/.github/workflows/rust-ci.yml@59d6af42ba3a4f7baa05fd4dbca0701bf858b452 # main
+    uses: Glyndor/.github/.github/workflows/rust-ci.yml@118244b8d758bdec6d2c5115d815dbc2e5c4f4e9 # main
 
   build:
     name: Build ${{ matrix.arch }}
