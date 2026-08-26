@@ -16,7 +16,7 @@ jobs:
     # gate's surface has not changed in 1.14.x → 1.15.x; the SHA is
     # still the right one. Per `standards/ci/index.md:20` the comment
     # format is `@<sha> # vX.Y.Z`.
-    uses: Glyndor/.github/.github/workflows/rust-ci.yml@d4bbc5b6ec0c351ca4cb17d948ceaad818da4078 # v1.18.1
+    uses: Glyndor/.github/.github/workflows/rust-ci.yml@8ae47ccd49ffdbf59d1acf7e6f9c18165bfba959 # v1.19.0
     with:
       # Coverage ratchet (measured 2026-08-17 on develop: 66.04%
       # lines / 72.64% functions / 67.77% regions after adding
