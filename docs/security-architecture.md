@@ -85,7 +85,7 @@ timestamp freshness against a 30s window
 requires the bearer to match `INTERNAL_TOKEN`. The `/heartbeat` route
 requires a valid Ed25519 signature, not the bearer, so a compromised
 `INTERNAL_TOKEN` cannot suppress lockdown by faking heartbeats
-(`internal/main.rs:466-511`).
+(`internal/main.rs` `heartbeat_handler`, from line 344).
 
 What happens on failure: rejection short-circuits to a 401/403/400 with
 a redacted code (`internal/error.rs:25-38`), the command is not
@@ -213,7 +213,7 @@ listed.
   `ON CONFLICT DO NOTHING`, and fails if the insert returned no row
   (`internal/auth/mod.rs:161-175`). The table is purged every five
   minutes via the periodic task
-  (`internal/main.rs:346-365`).
+  (`internal/main.rs:226-235`, the nonce-cleanup task).
 - **agent_id match.** The signed payload's `agent_id` must equal the
   configured `state.config.agent_id`, otherwise the command is
   rejected as misaddressed (`internal/auth/mod.rs:120-122`).
@@ -223,7 +223,7 @@ listed.
   `internal/auth/mod.rs:180-187`).
 - **Heartbeat ACK requires Ed25519, not the bearer.** The `/heartbeat`
   HTTP route invokes `verify_command` directly and rejects with 401
-  on any signature failure (`internal/main.rs:472-486`). This is so
+  on any signature failure (`internal/main.rs:344-360`). This is so
   a stolen `INTERNAL_TOKEN` alone cannot silence lockdown.
 - **Lockdown gate on `/cmd`.** The HTTP `/cmd` route short-circuits
   to `Lockdown` (503) if the agent is in lockdown
@@ -276,17 +276,17 @@ listed.
 - **mTLS listener, fail-closed.** `build_tls_acceptor` returns
   `Ok(None)` only when `INSECURE_PLAIN_HTTP=1` is set explicitly,
   with a loud warn-level log on every startup that uses it
-  (`internal/main.rs:62-67`). On any other failure mode (missing,
+  (`internal/server.rs:36-43`). On any other failure mode (missing,
   partial, malformed-DER), the function returns `Err` and
   `main.rs` calls `process::exit(1)` before the listener opens
-  (`internal/main.rs:435-441`).
+  (`internal/main.rs:310-318`).
 - **Client cert verifier.** The server config trusts only the
-  supplied `TLS_CA_CERT_DER_FILE` (`internal/main.rs:93-100`). A
+  supplied `TLS_CA_CERT_DER_FILE` (`internal/server.rs:68-75`). A
   client presenting any other CA fails the handshake.
 - **INSECURE_PLAIN_HTTP as a debug switch.** Setting
   `INSECURE_PLAIN_HTTP=1` is the only way to serve plain HTTP, and
   the log line on use is explicit about it being a dev-only escape
-  (`internal/main.rs:62-67, 458`). See Gaps, item 1.
+  (`internal/server.rs:36-43` and `internal/main.rs:336`). See Gaps, item 1.
 
 ### 4.4 Dashboard verify keyring
 
@@ -394,13 +394,13 @@ listed.
   `/etc/nftables-helmly-agent.conf` so nftables.service can reload
   it at boot (`internal/nftables/mod.rs:89-93`). At agent startup,
   the ruleset is re-read from `nftables_state` and re-applied
-  (`internal/main.rs:249-310`).
+  (`internal/main.rs:129-215`).
 - **PG watchdog → lockdown.** A 30-second timer
-  (`internal/main.rs:371`) issues `SELECT 1`; an error sets
-  `LockdownReason::PgUnreachable` (`internal/main.rs:375-383`).
+  (`internal/main.rs:248-252`) issues `SELECT 1`; an error sets
+  `LockdownReason::PgUnreachable` (`internal/main.rs:253-261`).
 - **Heartbeat watchdog → lockdown.** A 30-second timer checks the
   elapsed since `last_heartbeat`; >300s sets
-  `LockdownReason::Heartbeat` (`internal/main.rs:159, 411-426`).
+  `LockdownReason::Heartbeat` (`internal/main.rs:37` and `internal/main.rs:293-303`).
 - **Lockdown state machine.** `clear_lockdown_if_heartbeat` clears
   the flag only when the reason is `Heartbeat` or `None`; the
   other reasons (`PgUnreachable`, `IncompatibleSoftware`,
@@ -506,7 +506,7 @@ listed.
 - **Startup recovery.** On boot, the agent queries
   `container_deployments` where `desired = 'running'` and runs
   `podman compose up --no-recreate` for each, so reboots restore
-  the desired state (`internal/main.rs:312-343`).
+  the desired state (`internal/main.rs:200-215`).
 - **Migration path sync (`dashboard.migrate`).** When a node is
   migrated, the handler validates `target_url` against
   `DASHBOARD_URL`: same scheme (`http` or `https`), same host
@@ -619,7 +619,7 @@ the issue reference where one exists.
   `TLS_CERT_DER_FILE`, `TLS_KEY_DER_FILE`, or `TLS_CA_CERT_DER_FILE`.
   `update-agent.sh` likewise does not generate or accept a client
   certificate. On any fresh install, `build_tls_acceptor` therefore
-  errors out at startup (`internal/main.rs:69-75, 432-441`) and the
+  errors out at startup (`internal/server.rs:44-55` and `internal/main.rs:310-318`) and the
   agent exits with code 1 before binding the listener. In other
   words the fail-closed branch is reachable in production, and the
   operator can only get the listener up by setting
@@ -742,8 +742,9 @@ of the following:
 
 - Authentication: `internal/auth/mod.rs`, `internal/cert.rs`,
   `internal/config.rs`.
-- Transport: `internal/main.rs` (TLS construction and the
-  fail-closed branch), `internal/ws_client.rs`.
+- Transport: `internal/server.rs` (TLS construction and the
+  fail-closed branch), `internal/main.rs` (the exit on `Err`),
+  `internal/ws_client.rs`.
 - Update: `internal/update/mod.rs`, `internal/update/fallback.rs`,
   `update-agent.sh`.
 - Isolation: `internal/nftables/mod.rs`,
@@ -754,3 +755,13 @@ Not after, not in a follow-up, not "later when there's time". A
 review agent that diffs the code against this document and finds a
 gap on a feature merged yesterday is the failure mode this rule
 exists to prevent.
+
+A refactor counts, even one that changes no behaviour. Every claim
+here carries a line number, and moving code invalidates them
+silently: a citation that now points at the wrong function still
+reads as evidence. #152 moved `build_tls_acceptor` and `serve_tls`
+out of `internal/main.rs` and shifted everything after them, which
+left thirteen citations in this file pointing at unrelated code and
+some past the end of the file. Relocating a function means walking
+the citations to it in the same pull request, and a spot check of a
+handful is what catches the ones a search for the filename misses.
