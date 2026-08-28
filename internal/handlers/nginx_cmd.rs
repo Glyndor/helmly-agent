@@ -273,37 +273,115 @@ fn validate_domain_for_path(domain: &str) -> std::result::Result<(), AgentError>
 
 /// Close port 19443 via nftables once a domain is confirmed active.
 pub fn handle_close_setup_port(
-	_state: &AppState,
+	state: &AppState,
 	cmd: &VerifiedCommand,
 ) -> std::result::Result<Value, AgentError> {
+	let _ = state;
+	close_setup_port_with(cmd, &nft_run)
+}
+
+/// The setup port, as `setup-agent.sh` writes it into the bootstrap ruleset.
+pub(crate) const SETUP_PORT: u16 = 19443;
+
+/// Run `nft` with `args` and return its stdout.
+fn nft_run(args: &[&str]) -> anyhow::Result<String> {
+	let out = std::process::Command::new("nft")
+		.args(args)
+		.output()
+		.map_err(|e| anyhow::anyhow!("spawn nft: {e}"))?;
+	if !out.status.success() {
+		anyhow::bail!(
+			"nft {:?} failed: {}",
+			args,
+			String::from_utf8_lossy(&out.stderr).trim()
+		);
+	}
+	Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Close the setup port by DELETING the rule that accepts it.
+///
+/// The previous implementation appended `tcp dport 19443 drop` and returned
+/// `{"ok": true}`. `nft add rule` appends, the chain `setup-agent.sh` builds
+/// already accepts 19443 higher up, and a chain is evaluated in order with
+/// `accept` as a terminal verdict, so the appended rule was unreachable. It
+/// sat below the chain's own trailing `drop` as well. The port stayed open
+/// and the operator was told it had closed.
+///
+/// Appending a deny after an allow is not closing anything. So this finds
+/// every rule in the chain that accepts the port, deletes each by handle,
+/// and then RE-READS the chain to confirm none is left before reporting
+/// success. Asserting the shape of a control is not asserting the control,
+/// which is the whole lesson of the bug being fixed.
+pub(crate) fn close_setup_port_with<F>(
+	cmd: &VerifiedCommand,
+	nft: &F,
+) -> std::result::Result<Value, AgentError>
+where
+	F: Fn(&[&str]) -> anyhow::Result<String>,
+{
 	if cmd.permission < PermissionLevel::Write {
 		return Err(AgentError::Forbidden(
 			"nftables.close_setup_port requires write permission",
 		));
 	}
 
-	// Delete the rule that allows 19443 inbound.
-	// We use `nft -f -` with a flush + delete approach. If the rule handle is
-	// unknown we instead just add a drop rule — the end result is the same.
-	let drop_status = std::process::Command::new("nft")
-		.args([
-			"add",
+	let list = |nft: &F| -> std::result::Result<String, AgentError> {
+		nft(&["-a", "list", "chain", "inet", "helmly-agent", "helmly-base"])
+			.map_err(|e| AgentError::Internal(anyhow::anyhow!("list chain: {e}")))
+	};
+
+	let handles = accepting_handles(&list(nft)?);
+	for h in &handles {
+		let h = h.to_string();
+		nft(&[
+			"delete",
 			"rule",
 			"inet",
 			"helmly-agent",
 			"helmly-base",
-			"tcp",
-			"dport",
-			"19443",
-			"drop",
+			"handle",
+			&h,
 		])
-		.status()
-		.map_err(|e| AgentError::Internal(anyhow::anyhow!("nft add drop rule: {e}")))?;
-
-	if !drop_status.success() {
-		tracing::warn!("nft: could not add 19443 drop rule — port may already be closed");
+		.map_err(|e| AgentError::Internal(anyhow::anyhow!("delete rule handle {h}: {e}")))?;
 	}
 
-	tracing::info!("port 19443 closed via nftables");
-	Ok(json!({ "ok": true, "port": 19443 }))
+	// Re-read. The delete above can succeed on every handle and still leave
+	// the port open if the chain gained another accepting rule, so the answer
+	// comes from the ruleset rather than from the exit codes.
+	let remaining = accepting_handles(&list(nft)?);
+	if !remaining.is_empty() {
+		return Err(AgentError::Internal(anyhow::anyhow!(
+			"port {SETUP_PORT} still accepted by {} rule(s) after deleting {}; refusing to report it closed",
+			remaining.len(),
+			handles.len()
+		)));
+	}
+
+	tracing::info!(
+		"setup port {SETUP_PORT} closed: {} accepting rule(s) deleted, none remaining",
+		handles.len()
+	);
+	Ok(json!({ "ok": true, "port": SETUP_PORT, "rules_deleted": handles.len() }))
 }
+
+/// Handles of every rule in `chain_listing` that accepts the setup port.
+///
+/// `nft -a list chain` prints one rule per line ending in `# handle N`. A
+/// rule counts when it names the port as a `dport` AND reaches `accept`;
+/// a rule that merely mentions the number, or that drops it, is not what
+/// keeps the port open.
+fn accepting_handles(chain_listing: &str) -> Vec<u64> {
+	let dport = format!("dport {SETUP_PORT}");
+	chain_listing
+		.lines()
+		.filter(|l| l.contains(&dport) && l.split_whitespace().any(|w| w == "accept"))
+		.filter_map(|l| {
+			let (_, after) = l.rsplit_once("# handle ")?;
+			after.trim().parse::<u64>().ok()
+		})
+		.collect()
+}
+
+#[cfg(test)]
+mod tests;
