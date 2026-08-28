@@ -212,10 +212,17 @@ jobs:
         # cannot honour a pin it is not allowed to overwrite, and a
         # system-managed `cryptography` that pip can neither uninstall nor
         # replace has broken releases in this org before.
+        #
+        # Keep `pip install` and `--require-hashes` on ONE line. The
+        # tooling-isolation check reads a `run:` block line by line, and its
+        # exemption marker only exempts the line it appears on, so wrapping
+        # this command across a continuation makes it read as an unpinned
+        # install inside a job that holds the release key. The wrap is not a
+        # cosmetic choice, it is the difference between passing the gate and
+        # evading it.
         run: |
           python3 -m venv "$RUNNER_TEMP/signvenv"
-          "$RUNNER_TEMP/signvenv/bin/python" -m pip install --quiet \
-            --require-hashes -r .github/scripts/sign-requirements.txt
+          "$RUNNER_TEMP/signvenv/bin/python" -m pip install --quiet --require-hashes -r .github/scripts/sign-requirements.txt
 
       - name: Sign the binaries
         env:
