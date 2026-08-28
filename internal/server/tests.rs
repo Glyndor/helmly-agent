@@ -80,3 +80,69 @@ fn tls_malformed_der_returns_err() {
 	let r = build_tls_acceptor(&partial_tls_config(true, true, true), false);
 	assert!(r.is_err(), "malformed DER must fail closed");
 }
+
+// ---------------------------------------------------------------------------
+// Request body bound (#168).
+//
+// Everything the dashboard sends arrives as Json<SignedCommand>, and the
+// threat model treats it as untrusted input with bounded sizes. Until this
+// layer existed the only bound was axum's implicit default, which is a
+// framework choice rather than one made here.
+//
+// The signature does not answer this: a correctly signed body of any size is
+// still read in full before the verifier can decide anything about it, which
+// is why the cap is a layer and not a check inside a handler.
+// ---------------------------------------------------------------------------
+
+/// The constant is what the router is built with. Asserting the number alone
+/// would pin a value and not a behaviour, so the two tests below drive a real
+/// router through the layer instead; this one only pins the magnitude, so a
+/// fat-fingered 256 * 1024 * 1024 is caught by something.
+#[test]
+fn the_body_limit_is_the_documented_size() {
+	assert_eq!(crate::MAX_REQUEST_BODY_BYTES, 256 * 1024);
+}
+
+/// Drives the router `main` actually serves, not a synthetic one.
+///
+/// The first version of these tests built their own `Router` with the same
+/// layer, and deleting `.layer(...)` from `build_router` left them green.
+/// They were asserting that axum's DefaultBodyLimit works, which it does and
+/// which is not this repository's question.
+async fn status_for_body_of(len: usize) -> axum::http::StatusCode {
+	use axum::body::Body;
+	use tower::ServiceExt;
+	let state = crate::state::AppState::for_test();
+	let app = crate::build_router(state);
+	app.oneshot(
+		axum::http::Request::post("/cmd")
+			.header("content-type", "application/json")
+			.body(Body::from(vec![b'x'; len]))
+			.expect("request"),
+	)
+	.await
+	.expect("response")
+	.status()
+}
+
+#[tokio::test]
+async fn a_body_one_byte_over_the_limit_is_refused_by_the_real_router() {
+	assert_eq!(
+		status_for_body_of(crate::MAX_REQUEST_BODY_BYTES + 1).await,
+		axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+		"one byte over must be refused, not truncated and not accepted"
+	);
+}
+
+#[tokio::test]
+async fn a_body_at_the_limit_reaches_the_handler() {
+	// Not 200: the body is `xxxx...`, which is not a SignedCommand, so the
+	// Json extractor rejects it. That is the point. Anything other than
+	// PAYLOAD_TOO_LARGE means the limit let it through to be parsed, which
+	// is what "at the limit is accepted" has to mean here.
+	assert_ne!(
+		status_for_body_of(crate::MAX_REQUEST_BODY_BYTES).await,
+		axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+		"a body exactly at the limit must reach the extractor"
+	);
+}

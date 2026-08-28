@@ -34,6 +34,26 @@ use std::sync::{
 use tokio::time::{interval, Duration};
 use tracing::info;
 
+/// Largest request body the agent will read, in bytes.
+///
+/// Everything the dashboard sends arrives through `/cmd` or `/heartbeat` as
+/// `Json<SignedCommand>`, and the product's own threat model treats all of it
+/// as untrusted input with bounded sizes. The bound was axum's implicit
+/// default, which is a framework choice rather than one this repository made,
+/// sized, or wrote down.
+///
+/// The signature does not answer this. A correctly signed body of any size is
+/// still read in full before the verifier can decide anything about it, so the
+/// cap has to come before verification, which is where a layer puts it.
+///
+/// 256 KiB is chosen against the largest thing that legitimately travels: one
+/// tenant project's `compose_yaml`, plus the base64 envelope and a 64-byte
+/// signature. Real compose files are single-digit kilobytes; this leaves two
+/// orders of magnitude of headroom and is still eight times tighter than the
+/// default it replaces. Raise it when something legitimate is refused, and say
+/// in the commit what that was.
+const MAX_REQUEST_BODY_BYTES: usize = 256 * 1024;
+
 /// Agent enters lockdown if no heartbeat received from dashboard within this window.
 const HEARTBEAT_TIMEOUT_SECS: u64 = 300;
 
@@ -337,12 +357,7 @@ async fn main() -> anyhow::Result<()> {
 		}
 	};
 
-	let app = Router::new()
-		.route("/health", get(handlers::health))
-		.route("/cmd", post(handlers::execute_command))
-		.route("/metrics/ws", get(handlers::metrics_ws))
-		.route("/heartbeat", post(heartbeat_handler))
-		.with_state(state);
+	let app = build_router(state);
 
 	let listener = tokio::net::TcpListener::bind(&listen_addr).await?;
 
@@ -358,6 +373,24 @@ async fn main() -> anyhow::Result<()> {
 	}
 
 	Ok(())
+}
+
+/// Build the agent's router.
+///
+/// Extracted from `main` so a test can drive the router the process actually
+/// serves. It was inline, and the body-limit tests built their own router to
+/// exercise the layer: removing `.layer(...)` from this function compiled and
+/// left every test green, which means those tests were asserting axum's
+/// behaviour and not this program's. A control that no test reaches is the
+/// shape this repository has spent a day removing.
+pub(crate) fn build_router(state: AppState) -> Router {
+	Router::new()
+		.route("/health", get(handlers::health))
+		.route("/cmd", post(handlers::execute_command))
+		.route("/metrics/ws", get(handlers::metrics_ws))
+		.route("/heartbeat", post(heartbeat_handler))
+		.layer(axum::extract::DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
+		.with_state(state)
 }
 
 async fn heartbeat_handler(
