@@ -41,7 +41,8 @@ The agent is installed and updated by the Helmly installer — see
 
 ## Contributing & security
 
-See the org-wide [contributing guide](https://github.com/Glyndor/.github/blob/main/CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) in this repository. It replaces the org-wide
+guide, which describes a branch flow and a sign-off convention that do not hold here.
 Report vulnerabilities privately via the Security tab — never in a public issue.
 
 ## License
