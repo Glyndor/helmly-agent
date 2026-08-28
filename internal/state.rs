@@ -192,6 +192,55 @@ impl AppState {
 }
 
 #[cfg(test)]
+impl AppState {
+	/// An AppState for tests, with a lazy pool that never connects.
+	///
+	/// Three test modules each carry their own copy of this (handlers/system,
+	/// handlers/metrics, handlers/containers). This is not a fourth: it lives
+	/// on the type, so the next test needing one does not add a fifth.
+	/// Collapsing the existing three onto it is worth doing and is not done
+	/// here, because it touches three modules for no behaviour change while a
+	/// release is waiting.
+	pub(crate) fn for_test() -> Self {
+		let db = sqlx::postgres::PgPoolOptions::new()
+			.connect_lazy("postgres://test:test@127.0.0.1/test")
+			.expect("lazy pool");
+		AppState {
+			db,
+			config: Arc::new(Config {
+				database_url: "postgres://test/test".into(),
+				agent_id: uuid::Uuid::nil(),
+				version: "test".into(),
+				dashboard_verify_keys: zeroize::Zeroizing::new(Vec::new()),
+				internal_token: zeroize::Zeroizing::new("test-token".into()),
+				listen_addr: "127.0.0.1:0".into(),
+				dashboard_url: None,
+				sync_token: None,
+				tls_cert_der: None,
+				tls_key_der: None,
+				tls_ca_cert_der: None,
+				dashboard_port: None,
+			}),
+			lockdown: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+			lockdown_reason: Arc::new(Mutex::new(None)),
+			nft_checksum: Arc::new(Mutex::new(None)),
+			nft_chain_checksums: Arc::new(Mutex::new([None, None, None])),
+			nft_last_ruleset: Arc::new(Mutex::new(None)),
+			nft_global_body: Arc::new(Mutex::new(String::new())),
+			nft_local_body: Arc::new(Mutex::new(String::new())),
+			nft_global_output_body: Arc::new(Mutex::new(String::new())),
+			nft_local_output_body: Arc::new(Mutex::new(String::new())),
+			nft_wg_port: Arc::new(std::sync::atomic::AtomicU32::new(51820)),
+			cmd_rate: Arc::new(Mutex::new((0, 0))),
+			cmd_rejected_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+			cmd_rejected_window: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+			last_dashboard_contact: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+			last_heartbeat: Arc::new(Mutex::new(Instant::now())),
+		}
+	}
+}
+
+#[cfg(test)]
 mod tests {
 	//! Pure-logic tests for `AppState`. No DB, no I/O — every helper in this
 	//! file operates on `Arc`s / `Atomic`s / `Mutex`es that are observable
@@ -205,7 +254,6 @@ mod tests {
 
 	use super::*;
 	use crate::config::Config;
-	use sqlx::postgres::PgPoolOptions;
 	use std::sync::atomic::AtomicU32;
 	use std::time::{Duration, Instant};
 	use zeroize::Zeroizing;
@@ -230,7 +278,7 @@ mod tests {
 		};
 		// Lazy pool — never connects until something queries it, which these
 		// tests never do.
-		let db = PgPoolOptions::new()
+		let db = sqlx::postgres::PgPoolOptions::new()
 			.connect_lazy("postgres://test:test@127.0.0.1/test")
 			.expect("lazy pool");
 		AppState {
