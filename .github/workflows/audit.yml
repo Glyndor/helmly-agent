@@ -61,18 +61,25 @@ jobs:
         # ignore only what's documented in `audit.toml` with a measured
         # reachability argument.
         #
-        # `--no-yanked` filter: spin 0.9.8 is in Cargo.lock but NOT in
-        # the binary's build graph. Verified 2026-08-17:
-        #   $ cargo tree -i spin  # → no output (spin isn't a transitive
-        #                              dep of any helmly-agent target)
-        #   $ cargo tree --target all -i spin  # → same (no build graph)
-        # spin's reverse-deps in Cargo.lock (flume, futures-util,
-        # lazy_static) are pulled by feature combinations that don't
-        # link into the final binary — verified by inspecting the
-        # lockfile's target-keyed resolution table. Yanked is a
-        # release-deprecation signal, not a security vulnerability;
-        # filtering it doesn't weaken the gate.
-        run: cargo audit --deny warnings --ignore RUSTSEC-2023-0071 --no-yanked
+        # `--no-yanked` is deliberately absent. It was added to silence
+        # `spin 0.9.8`, a lockfile ghost that `cargo tree --target all -i
+        # spin` shows is in no build graph, and silencing it was defensible
+        # on its own. The problem is that the flag is class-wide: it went
+        # on to hide `chacha20 0.10.0`, which `cargo tree` resolves through
+        # `rand 0.10.1` into the binary, and which was yanked too. One
+        # reachable crate stayed invisible for as long as the flag was set,
+        # with nothing to signal that the situation had changed.
+        #
+        # Both are bumped in `Cargo.lock` now (chacha20 0.10.2, spin
+        # 0.9.9), so the flag is not needed and the next yanked crate will
+        # surface instead of arriving pre-forgiven.
+        #
+        # A yanked crate is a release-deprecation signal, not a
+        # vulnerability, so the fix is a lockfile bump rather than an
+        # ignore. If one ever cannot be bumped, record its reachability
+        # measurement in `audit.toml` alongside the RUSTSEC ignore. Do not
+        # reintroduce a flag that switches off the whole class.
+        run: cargo audit --deny warnings --ignore RUSTSEC-2023-0071
 
       - name: Run cargo deny
         run: cargo deny check
