@@ -12,9 +12,9 @@ use super::*;
 /// Mirror of `nftables::chain_checksum_raw`'s hashing step. Must stay
 /// in lockstep with `internal/nftables/mod.rs`.
 fn chain_checksum_of(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    hex::encode(hasher.finalize())
+	let mut hasher = Sha256::new();
+	hasher.update(bytes);
+	hex::encode(hasher.finalize())
 }
 
 /// Control: hashing the same input twice must produce the same
@@ -22,8 +22,8 @@ fn chain_checksum_of(bytes: &[u8]) -> String {
 /// hash makes the assertion go red.
 #[test]
 fn chain_checksum_stable_same_input_same_output() {
-    let input = b"nft -j -t list table inet helmly-agent output sample";
-    assert_eq!(chain_checksum_of(input), chain_checksum_of(input));
+	let input = b"nft -j -t list table inet helmly-agent output sample";
+	assert_eq!(chain_checksum_of(input), chain_checksum_of(input));
 }
 
 /// Control: different rulesets must produce different checksums.
@@ -31,12 +31,12 @@ fn chain_checksum_stable_same_input_same_output() {
 /// makes the assertion go red.
 #[test]
 fn chain_checksum_different_input_different_output() {
-    let h1 = chain_checksum_of(b"{\"nftables\":[{\"metainfo\":{}}]}");
-    let h2 = chain_checksum_of(b"{\"nftables\":[{\"metainfo\":{\"version\":\"1.0\"}}]}");
-    assert_ne!(
-        h1, h2,
-        "different ruleset bytes must hash to different checksums"
-    );
+	let h1 = chain_checksum_of(b"{\"nftables\":[{\"metainfo\":{}}]}");
+	let h2 = chain_checksum_of(b"{\"nftables\":[{\"metainfo\":{\"version\":\"1.0\"}}]}");
+	assert_ne!(
+		h1, h2,
+		"different ruleset bytes must hash to different checksums"
+	);
 }
 
 /// Control: a specific input must hash to its known SHA256 value.
@@ -45,13 +45,13 @@ fn chain_checksum_different_input_different_output() {
 /// hash and the assertion would catch it.
 #[test]
 fn chain_checksum_known_input_produces_known_hash() {
-    let input = b"helmly-base: chain checksum contract test fixture";
-    let mut expected_hasher = Sha256::new();
-    expected_hasher.update(input);
-    let expected = hex::encode(expected_hasher.finalize());
-    let actual = chain_checksum_of(input);
-    assert_eq!(actual, expected);
-    assert_eq!(actual.len(), 64, "SHA256 hex must be 64 chars");
+	let input = b"helmly-base: chain checksum contract test fixture";
+	let mut expected_hasher = Sha256::new();
+	expected_hasher.update(input);
+	let expected = hex::encode(expected_hasher.finalize());
+	let actual = chain_checksum_of(input);
+	assert_eq!(actual, expected);
+	assert_eq!(actual.len(), 64, "SHA256 hex must be 64 chars");
 }
 
 /// Control: the checksum function does not parse JSON — it hashes
@@ -60,10 +60,10 @@ fn chain_checksum_known_input_produces_known_hash() {
 /// assertion `Ok(_)` here goes red and signals the change.
 #[test]
 fn chain_checksum_malformed_input_still_hashes() {
-    let bytes = b"not json at all { broken [[[ ";
-    let h = chain_checksum_of(bytes);
-    assert_eq!(h.len(), 64);
-    assert_eq!(h, chain_checksum_of(bytes), "stable across calls");
+	let bytes = b"not json at all { broken [[[ ";
+	let h = chain_checksum_of(bytes);
+	assert_eq!(h.len(), 64);
+	assert_eq!(h, chain_checksum_of(bytes), "stable across calls");
 }
 
 /// Control: empty input is still hashed (the `-t` terse mode produces
@@ -71,7 +71,7 @@ fn chain_checksum_malformed_input_still_hashes() {
 /// still produce a stable checksum — not crash).
 #[test]
 fn chain_checksum_empty_input_hashes() {
-    let h = chain_checksum_of(b"");
-    assert_eq!(h.len(), 64);
-    assert!(!h.is_empty());
+	let h = chain_checksum_of(b"");
+	assert_eq!(h.len(), 64);
+	assert!(!h.is_empty());
 }

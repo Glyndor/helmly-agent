@@ -12,10 +12,10 @@ use super::*;
 /// is the load-bearing one for this branch.
 #[tokio::test]
 async fn notify_dashboard_no_url_returns_immediately() {
-    let state = make_state_with_dashboard(None, Some("token"));
-    // Must not panic, must not block, must not update any state.
-    notify_dashboard(&state, "helmly-base", true).await;
-    assert!(!state.is_locked_down());
+	let state = make_state_with_dashboard(None, Some("token"));
+	// Must not panic, must not block, must not update any state.
+	notify_dashboard(&state, "helmly-base", true).await;
+	assert!(!state.is_locked_down());
 }
 
 /// Control: with `dashboard_url` set but `sync_token` unset, the
@@ -32,7 +32,7 @@ async fn notify_dashboard_no_url_returns_immediately() {
 /// coverage is the early-return code itself being compiled in.
 #[tokio::test]
 async fn notify_dashboard_no_sync_token_returns_immediately() {
-    let state = make_state_with_dashboard(Some("http://127.0.0.1:1"), None);
-    notify_dashboard(&state, "helmly-base", true).await;
-    assert!(!state.is_locked_down());
+	let state = make_state_with_dashboard(Some("http://127.0.0.1:1"), None);
+	notify_dashboard(&state, "helmly-base", true).await;
+	assert!(!state.is_locked_down());
 }
