@@ -11,11 +11,9 @@ permissions:
 
 jobs:
   rust:
-    # Pin to v1.14.2 — the SHA `59d6af42` is reachable from `v1.14.2`,
-    # `v1.15.0`, `v1.15.1`, so the comment `# main` was just stale. The
-    # gate's surface has not changed in 1.14.x → 1.15.x; the SHA is
-    # still the right one. Per `standards/ci/index.md:20` the comment
-    # format is `@<sha> # vX.Y.Z`.
+    # The comment that stood here explained which upstream tag the SHA
+    # pin resolved to. #158 removed the pin, so it explained nothing and
+    # would have been read as current by the next person to open the file.
     uses: ./.github/workflows/reusable-rust-ci.yml
     with:
       # Coverage ratchet. The number went DOWN in this pull request and
@@ -58,6 +56,28 @@ jobs:
   dependabot-freshness:
     uses: ./.github/workflows/reusable-dependabot-freshness.yml
     with:
+      max-age-days: 15
+
+  # audit.yml is the only scheduled workflow here, weekly on Monday, and
+  # until now nothing noticed if it stopped firing. A cron that silently
+  # stops looks exactly like a cron with nothing to report: the last run is
+  # green either way, and the absence of a newer one is the only signal.
+  # 15 days is about two periods, so one missed Monday is tolerated and two
+  # are not.
+  schedule-freshness:
+    # `actions: read` is required and is not optional politeness: a called
+    # workflow cannot elevate beyond the permissions of its caller, and
+    # reading run history needs that scope. Granted per job rather than
+    # raised at the top of the file, so no other job gains it. Without it
+    # the whole workflow fails to load, which is how this was found: the
+    # run reported `startup_failure` with every check missing rather than
+    # one job failing, and actionlint is clean either way.
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/reusable-schedule-freshness.yml
+    with:
+      workflow: audit.yml
       max-age-days: 15
 
   # The two installer scripts are the only shell in the repository, and until
