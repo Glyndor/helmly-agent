@@ -132,6 +132,11 @@ _cleanup_existing() {
     rm -rf "$HELMLY_WG_DIR" "$HELMLY_DIR/credentials"
     rm -f  "$AGENT_CONF" "$HELMLY_DIR/agent-id"
     rm -f  "$BIN_DIR/helmly-agent" "$BIN_DIR/helmly-agent.prev" "$BIN_DIR/helmly-agent-version"
+    # Also remove the install-method marker — the cleanup path leaves a fresh
+    # /etc/glyndor/helmly (shared with the dashboard on co-located VPSes) but
+    # the marker is install-specific. Re-installed setups will write it back
+    # at the same point in the script that writes helmly-agent-version.
+    rm -f  "$HELMLY_DIR/.install-method"
     rmdir  "$BIN_DIR" "$HELMLY_DIR" 2>/dev/null || true
 
     if [[ -n "$_SAVED_DASH_SIGN_PUBKEY" ]]; then
@@ -238,6 +243,15 @@ echo ""
 read -rp "  Agent WireGuard IP assigned by dashboard (e.g. 10.100.0.3): " AGENT_WG_IP_INPUT
 echo ""
 read -rsp "  Sync token (shown once when registering this VPS in the dashboard): " SYNC_TOKEN
+echo
+echo
+echo "  The same registration response carries the agent's mTLS material,"
+echo "  base64-encoded, as tls_cert_der, tls_key_der and tls_ca_cert_der."
+echo "  The agent refuses to start without all three."
+read -rp "  TLS certificate (tls_cert_der): " TLS_CERT_B64
+read -rsp "  TLS private key (tls_key_der): " TLS_KEY_B64
+echo
+read -rp "  Dashboard CA certificate (tls_ca_cert_der): " TLS_CA_B64
 echo ""
 
 # Dashboard Ed25519 signing public key — required for the agent to verify
@@ -261,8 +275,8 @@ fi
 unset DEFAULT_DASHBOARD_SIGN_PUBKEY
 echo ""
 
-if [[ -z "$DASHBOARD_ENDPOINT" || -z "$DASHBOARD_PUBKEY" || -z "$PSK" || -z "$AGENT_WG_IP_INPUT" || -z "$DASHBOARD_SIGN_PUBKEY" || -z "$SYNC_TOKEN" ]]; then
-    log_error "All six values are required (endpoint, WG pubkey, PSK, agent WG IP, dashboard signing pubkey, sync token)."
+if [[ -z "$DASHBOARD_ENDPOINT" || -z "$DASHBOARD_PUBKEY" || -z "$PSK" || -z "$AGENT_WG_IP_INPUT" || -z "$DASHBOARD_SIGN_PUBKEY" || -z "$SYNC_TOKEN" || -z "$TLS_CERT_B64" || -z "$TLS_KEY_B64" || -z "$TLS_CA_B64" ]]; then
+    log_error "All nine values are required (endpoint, WG pubkey, PSK, agent WG IP, dashboard signing pubkey, sync token, and the three TLS blobs)."
     exit 1
 fi
 
@@ -592,7 +606,6 @@ log_ok "$HELMLY_DIR"
 log_section "Downloading helmly-agent binary"
 
 GITHUB_REPO="Glyndor/helmly-agent"
-RELEASE_VERIFY_KEY_B64="HFv7vg5FCY7YyKUDbJhaQSfB9SboJGSblJtFbLmLHzM="
 
 _ARCH=$(uname -m)
 case "$_ARCH" in
@@ -648,23 +661,111 @@ fi
 mkdir -p "$BIN_DIR"
 chmod 755 "$BIN_DIR"
 
+_write_tls_credentials() {
+	# Write the three mTLS files the agent requires, or write none of them.
+	#
+	# The dashboard issues all three at VPS registration and returns them
+	# base64-encoded (helmly, agents/handlers/crud.rs). The agent fails closed
+	# without them, so a partial write is the worst outcome available: the host
+	# looks provisioned and the service does not start, with an error that
+	# names TLS rather than the install.
+	#
+	# Hence: decode all three into a staging directory FIRST, and only move
+	# them into place once every one has decoded. A bad third argument then
+	# costs nothing, instead of leaving two good files behind.
+	local cert_b64="$1" key_b64="$2" ca_b64="$3" dir="$4"
+	local staging
+	staging="$(mktemp -d "${dir}/.tls-staging-XXXXXX")" || return 1
+
+	local name b64
+	for pair in "tls-cert.der:${cert_b64}" "tls-key.der:${key_b64}" "tls-ca.der:${ca_b64}"; do
+		name="${pair%%:*}"
+		b64="${pair#*:}"
+		if [[ -e "${dir}/${name}" ]]; then
+			log_error "${dir}/${name} already exists; refusing to overwrite material the dashboard may already trust"
+			rm -rf "$staging"
+			return 1
+		fi
+		if [[ -z "$b64" ]]; then
+			log_error "empty value for ${name}; paste all three from the dashboard's registration response"
+			rm -rf "$staging"
+			return 1
+		fi
+		if ! printf '%s' "$b64" | base64 -d > "${staging}/${name}" 2>/dev/null; then
+			log_error "${name} is not valid base64; copy it exactly as the dashboard printed it"
+			rm -rf "$staging"
+			return 1
+		fi
+		if [[ ! -s "${staging}/${name}" ]]; then
+			log_error "${name} decoded to nothing"
+			rm -rf "$staging"
+			return 1
+		fi
+		chmod 600 "${staging}/${name}"
+	done
+
+	# Every blob decoded. Move them in; a rename within one filesystem is
+	# atomic per file, and the validation above is what makes the set atomic.
+	for name in tls-cert.der tls-key.der tls-ca.der; do
+		mv "${staging}/${name}" "${dir}/${name}"
+	done
+	rmdir "$staging"
+	log_ok "mTLS material written to ${dir}"
+	return 0
+}
+
 _verify_release_sig() {
     local file="$1" sig_file="$2"
-    python3 - "$RELEASE_VERIFY_KEY_B64" "$file" "$sig_file" <<'PYEOF'
+    python3 - "$file" "$sig_file" <<'PYEOF'
 import sys, base64
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-pub_key = Ed25519PublicKey.from_public_bytes(base64.b64decode(sys.argv[1] + "=="))
+# C2: dual-slot release verify pubkey, mirroring `podup`'s
+# `RELEASE_PUBKEYS` two-slot pattern (`standards/releases/index.md:52-58`).
+# Slot 0 is the active signing key; slot 1 carries the next key during a
+# two-phase rotation, or is empty when no rotation is in flight.
+# The release.yml pin check at the "Verify signatures against the pinned install key" step in `.github/workflows/release.yml`
+# greps these literals to assert the Rust const, the install-script
+# constant, and the update-script constant all agree.
+PUB_KEYS_B64 = [
+    # Slot 0: GLYNDOR_RELEASE_ED25519_KEY
+    "HFv7vg5FCY7YyKUDbJhaQSfB9SboJGSblJtFbLmLHzM=",
+    # Slot 1: empty (no rotation in flight).
+    "",
+]
 
-with open(sys.argv[2], "rb") as f:
+with open(sys.argv[1], "rb") as f:
     data = f.read()
-with open(sys.argv[3], "rb") as f:
+with open(sys.argv[2], "rb") as f:
     sig = f.read()
-try:
-    pub_key.verify(sig, data)
-except Exception as e:
+
+# Iterate non-empty slots; first match wins; if none, fail closed.
+errors = []
+matched = False
+for i, slot_b64 in enumerate(PUB_KEYS_B64):
+    if not slot_b64:
+        # Empty slot = no rotation in flight. Skip.
+        continue
+    try:
+        key = Ed25519PublicKey.from_public_bytes(base64.b64decode(slot_b64 + "=="))
+    except Exception as e:
+        errors.append(f"slot {i} key invalid: {e}")
+        continue
+    try:
+        key.verify(sig, data)
+    except Exception as e:
+        errors.append(f"slot {i} did not verify: {e}")
+        continue
+    matched = True
+    break
+
+if matched:
+    sys.exit(0)
+
+for e in errors:
     print(f"signature invalid: {e}", file=sys.stderr)
-    sys.exit(1)
+print("signature did not verify against any non-empty slot of PUB_KEYS_B64", file=sys.stderr)
+sys.exit(1)
 PYEOF
 }
 
@@ -892,6 +993,14 @@ PG_PASS="$("$BINARY_PATH" gen-rand 32)"
 printf '%s' "${LATEST_AGENT_TAG#v}" > "$BIN_DIR/helmly-agent-version"
 log_ok "Version: ${LATEST_AGENT_TAG#v}"
 
+# --- Write install-method marker -------------------------------------------
+# Tells the in-band self-update that this install is script-managed, not
+# dpkg-managed. A future helmly-agent.deb postinst writes "dpkg" instead.
+# Read by internal/update/mod.rs::check_install_method_marker_at.
+printf '%s' 'script' > /etc/glyndor/helmly/.install-method
+chmod 0644 /etc/glyndor/helmly/.install-method
+log_ok "Install-method marker: script (this install is managed by setup-agent.sh)"
+
 # --- Write agent env file ---------------------------------------------------
 
 log_section "Writing agent configuration"
@@ -911,6 +1020,9 @@ DATABASE_URL_FILE=/run/credentials/helmly-agent.service/database-url
 INTERNAL_TOKEN_FILE=/run/credentials/helmly-agent.service/internal-token
 DASHBOARD_VERIFY_KEY_FILE=/run/credentials/helmly-agent.service/helmly-dashboard-pubkey
 SYNC_TOKEN_FILE=/run/credentials/helmly-agent.service/sync-token
+TLS_CERT_DER_FILE=/run/credentials/helmly-agent.service/tls-cert.der
+TLS_KEY_DER_FILE=/run/credentials/helmly-agent.service/tls-key.der
+TLS_CA_CERT_DER_FILE=/run/credentials/helmly-agent.service/tls-ca.der
 KEK_FILE=/run/credentials/helmly-agent.service/helmly-kek
 LISTEN_ADDR=127.0.0.1:${AGENT_PORT}
 DASHBOARD_URL=http://${DASHBOARD_WG_IP}:8080
@@ -940,6 +1052,16 @@ unset DASHBOARD_SIGN_PUBKEY
 
 # Persist the sync token — used to authenticate the agent→dashboard WebSocket
 # connection and audit log sync.  Shown once when registering the VPS.
+# The three mTLS files. Written through _write_tls_credentials so the set
+# is all-or-nothing: the agent fails closed without them, so a host with
+# two of the three looks provisioned and will not start.
+if ! _write_tls_credentials "$TLS_CERT_B64" "$TLS_KEY_B64" "$TLS_CA_B64" \
+    /etc/glyndor/helmly/credentials; then
+    log_error "Could not write the mTLS material; the agent would not start. Nothing was written."
+    exit 1
+fi
+unset TLS_CERT_B64 TLS_KEY_B64 TLS_CA_B64
+
 printf '%s' "$SYNC_TOKEN" > /etc/glyndor/helmly/credentials/sync-token
 chmod 600 /etc/glyndor/helmly/credentials/sync-token
 SYNC_TOKEN="$("$BINARY_PATH" gen-rand 32)"
@@ -989,6 +1111,9 @@ LoadCredential=database-url:/etc/glyndor/helmly/credentials/database-url
 LoadCredential=internal-token:/etc/glyndor/helmly/credentials/internal-token
 LoadCredential=helmly-dashboard-pubkey:/etc/glyndor/helmly/credentials/helmly-dashboard-pubkey
 LoadCredential=sync-token:/etc/glyndor/helmly/credentials/sync-token
+LoadCredential=tls-cert.der:/etc/glyndor/helmly/credentials/tls-cert.der
+LoadCredential=tls-key.der:/etc/glyndor/helmly/credentials/tls-key.der
+LoadCredential=tls-ca.der:/etc/glyndor/helmly/credentials/tls-ca.der
 LoadCredential=helmly-wg-psk:-/etc/glyndor/helmly/credentials/helmly-wg-psk
 LoadCredential=helmly-kek:/etc/glyndor/helmly/credentials/helmly-kek
 

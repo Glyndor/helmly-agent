@@ -26,7 +26,12 @@ def main() -> None:
 	pubkey_b64 = sys.argv[2]
 	sig_file = sys.argv[3] if len(sys.argv) > 3 else artifact + ".sig"
 
-	pub = Ed25519PublicKey.from_public_bytes(base64.b64decode(pubkey_b64))
+	# Accept the key with or without '=' padding. The sources store it
+	# padded, and a caller that strips the padding would otherwise get a
+	# binascii traceback rather than a verification result.
+	pub = Ed25519PublicKey.from_public_bytes(
+		base64.b64decode(pubkey_b64 + "=" * (-len(pubkey_b64) % 4))
+	)
 	with open(artifact, "rb") as f:
 		data = f.read()
 	with open(sig_file, "rb") as f:

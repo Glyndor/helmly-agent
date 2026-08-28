@@ -141,18 +141,58 @@ _verify_release_sig() {
 import sys, base64
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-pub_b64 = "HFv7vg5FCY7YyKUDbJhaQSfB9SboJGSblJtFbLmLHzM="
-pub_key = Ed25519PublicKey.from_public_bytes(base64.b64decode(pub_b64 + "=="))
+# C2: dual-slot release verify pubkey, mirroring `podup`'s
+# `RELEASE_PUBKEYS` two-slot pattern (`standards/releases/index.md:52-58`).
+# Slot 0 is the active signing key; slot 1 carries the next key during a
+# two-phase rotation, or is empty when no rotation is in flight.
+# The release.yml pin check at the "Verify signatures against the pinned install key" step in `.github/workflows/release.yml`
+# greps these literals to assert the Rust const, the install-script
+# constant, and the update-script constant all agree.
+PUB_KEYS_B64 = [
+    # Slot 0: GLYNDOR_RELEASE_ED25519_KEY
+    "HFv7vg5FCY7YyKUDbJhaQSfB9SboJGSblJtFbLmLHzM=",
+    # Slot 1: empty (no rotation in flight). Populated with the next key
+    # in a transition release; removed after every agent holds both.
+    "",
+]
+
+# Backwards compat: PUB_KEYS_B64[0] also exposed as the legacy single
+# PUB_B64, in case any downstream tooling still greps the install scripts
+# for that exact identifier.
+PUB_B64 = PUB_KEYS_B64[0]
 
 with open(sys.argv[1], "rb") as f:
     data = f.read()
 with open(sys.argv[2], "rb") as f:
     sig = f.read()
-try:
-    pub_key.verify(sig, data)
-except Exception as e:
+
+# Iterate non-empty slots; first match wins; if none, fail closed.
+errors = []
+matched = False
+for i, slot_b64 in enumerate(PUB_KEYS_B64):
+    if not slot_b64:
+        # Empty slot = no rotation in flight. Skip.
+        continue
+    try:
+        key = Ed25519PublicKey.from_public_bytes(base64.b64decode(slot_b64 + "=="))
+    except Exception as e:
+        errors.append(f"slot {i} key invalid: {e}")
+        continue
+    try:
+        key.verify(sig, data)
+    except Exception as e:
+        errors.append(f"slot {i} did not verify: {e}")
+        continue
+    matched = True
+    break
+
+if matched:
+    sys.exit(0)
+
+for e in errors:
     print(f"signature invalid: {e}", file=sys.stderr)
-    sys.exit(1)
+print("signature did not verify against any non-empty slot of PUB_KEYS_B64", file=sys.stderr)
+sys.exit(1)
 PYEOF
 }
 
@@ -221,6 +261,13 @@ log_ok "helmly-agent running with new binary"
 # --- Write version file -----------------------------------------------------
 
 printf '%s' "$LATEST_VERSION" > "$VERSION_FILE"
+
+# --- Write install-method marker --------------------------------------------
+# Idempotent: same value the initial setup wrote. The in-band self-update
+# path also reads this file (internal/update/mod.rs), so the bash updater
+# and the Rust updater see the same flag.
+printf '%s' 'script' > /etc/glyndor/helmly/.install-method
+chmod 0644 /etc/glyndor/helmly/.install-method
 
 # --- Done -------------------------------------------------------------------
 

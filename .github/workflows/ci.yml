@@ -11,4 +11,99 @@ permissions:
 
 jobs:
   rust:
-    uses: Glyndor/.github/.github/workflows/rust-ci.yml@c2cf3d74719451a7a11fa8e5fae3f4a3c4e37fe6 # main
+    # The comment that stood here explained which upstream tag the SHA
+    # pin resolved to. #158 removed the pin, so it explained nothing and
+    # would have been read as current by the next person to open the file.
+    uses: ./.github/workflows/reusable-rust-ci.yml
+    with:
+      # Coverage ratchet. The number went DOWN in this pull request and
+      # the measurement got stricter, which is worth reading carefully
+      # before anyone raises it back.
+      #
+      # Until now the `#[cfg(test)] mod tests` blocks lived inside the
+      # files they test, and cargo-llvm-cov counted those test bodies as
+      # covered lines of the production file. The tests were measuring
+      # themselves. Moving them into sibling `tests.rs` files puts them
+      # under llvm-cov's default filename exclusion, so they leave both
+      # the numerator and the denominator.
+      #
+      # Measured with the reusable's own command, same commit, only the
+      # move between them:
+      #
+      #   before   8673 lines, 5878 covered, 67.77%
+      #   after    4941 lines, 2355 covered, 47.66%
+      #
+      # 47.66% is what production coverage has been all along; 67.77%
+      # was roughly 20 points of test code vouching for itself. So 45
+      # here is not a relaxed gate, it is the first honest one, with
+      # ~2.7pp of margin. Raise it in the same pull request that raises
+      # the coverage, never silently.
+      coverage-threshold: 45
+
+  # pin-policy is deliberately gone rather than copied. Its script matches
+  # exactly one thing, `Glyndor/.github/.github/workflows/<X>.yml@<sha>`
+  # (scripts/pin-policy.py:52), and this repository now has none of those.
+  # Copying it would have produced a required-shaped check that can never
+  # fail, which is worse than no check: it teaches everyone that green
+  # means verified when it means "found nothing to look at".
+  #
+  # What it actually bought was "the versions you pin are current". That
+  # question survives, it just moved: the third-party actions pinned inside
+  # the reusables below are now files in this repository, so Dependabot's
+  # github-actions ecosystem sees them and opens the bumps directly. The
+  # freshness watcher below is what notices if it stops.
+
+  dependabot-freshness:
+    uses: ./.github/workflows/reusable-dependabot-freshness.yml
+    with:
+      max-age-days: 15
+
+  # The `schedule-freshness` caller lived here and is held until the
+  # release. It failed on its first run and it was right to: audit.yml has
+  # never fired on schedule, because GitHub reads `schedule:` triggers only
+  # from the default branch and audit.yml is not on `main`. The guard
+  # reported a real dead cron on contact, and its own header says a
+  # workflow with no successful scheduled run on record is a failure "which
+  # for an established workflow is exactly right".
+  #
+  # So the fix is the develop -> main release, not a change here, and a
+  # check that cannot pass until then must not sit red in the meantime.
+  # Tracked in #162; the reusable stays in the tree, only the caller comes
+  # out, and it goes back once one scheduled run exists.
+
+  # The two installer scripts are the only shell in the repository, and until
+  # now nothing linted them. Both are clean at shellcheck's strictest level
+  # (`-S style`, 0 findings on setup-agent.sh and update-agent.sh as of this
+  # commit), so adopting the gate costs nothing today and catches the next
+  # edit rather than the next incident. setup-agent.sh is 1250 lines and runs
+  # as root on a fresh server, which is the worst place to find out.
+  #
+  # No `test-command` is passed because there is no shell test suite here.
+  # That is deliberate and it has a consequence worth writing down:
+  # shell-ci.yml:167 guards its `test` job with `if: inputs.test-command != ''`,
+  # so `shell / test` skips on every run, and a skipped check reports Success.
+  # It must therefore not be made a required check while it skips, or the
+  # ruleset would be satisfied by a job that never ran. `shell / shellcheck`
+  # does run, and is the one worth promoting once it has been seen to fail.
+  shell:
+    uses: ./.github/workflows/reusable-shell-ci.yml
+    with:
+      # There is a shell test suite now, so the `test` job stops skipping.
+      # #148 adopted this caller with the input empty and wrote down what
+      # that cost: shell-ci guards its test job with
+      # `if: inputs.test-command != ''`, so `shell / test` skipped on every
+      # run, and a skipped check reports Success. It was therefore unfit to
+      # be a required check. With a command it runs, and it can be promoted.
+      test-command: ./tests/run.sh
+      apt-packages: python3-cryptography
+
+  # actionlint plus the org's own workflow checks. The one that earns its
+  # place here is tooling-isolation: it fails when a job that holds a secret
+  # also installs third-party tooling, which is what `release.yml` did until
+  # #146 moved signing out of the build matrix. Adopting the gate now is what
+  # keeps it from drifting back, and it caught a real regression on the way
+  # in: the pinned `pip install` was wrapped across a line continuation, and
+  # the check reads a run block line by line, so the `--require-hashes`
+  # marker was not on the line it had to exempt.
+  workflow-lint:
+    uses: ./.github/workflows/reusable-workflow-lint.yml

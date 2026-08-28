@@ -1,0 +1,23 @@
+name: DCO
+
+# Its own workflow, and pull_request only, because that is the only event
+# where the question is answerable. The reusable derives its commit range
+# from the pull request's base and head; on a push to a branch there is no
+# base, both are empty, and the check fails closed with
+# "could not enumerate merge commits between  and ". It was green on every
+# pull request and red on every push to develop from the moment it was
+# added in #148, which is what putting it in ci.yml (push + pull_request)
+# bought. Matches podup's shape.
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+
+permissions:
+  contents: read
+
+jobs:
+  dco:
+    uses: ./.github/workflows/reusable-dco.yml

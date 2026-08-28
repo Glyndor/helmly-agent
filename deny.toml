@@ -1,0 +1,102 @@
+# cargo-deny configuration for helmly-agent.
+#
+# Mirrors the configuration podup and epistle use; this is the
+# "production" version per the org's existing patterns (cargo-audit
+# is run separately, via .github/workflows/audit.yml).
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+# No ignores today, and that is NOT because RUSTSEC-2023-0071 went away.
+# It is still live and `rsa` 0.9.10 is still in Cargo.lock, alongside
+# sqlx-mysql, its only reverse-dependency. Measured on this commit:
+#
+#   $ cargo audit --deny warnings          # no --ignore
+#   error: 1 vulnerability found!          # RUSTSEC-2023-0071
+#   $ cargo deny check advisories
+#   advisories ok
+#
+# The two tools disagree because they measure different things, and both
+# are right about their own question. cargo-deny resolves the dependency
+# GRAPH (`[graph] all-features = true` above), and rsa is not in it:
+#
+#   $ cargo tree --target all -i rsa           # nothing to print
+#   $ cargo tree --target all -i sqlx-mysql    # nothing to print
+#
+# cargo-audit reads Cargo.lock as text, where both are present, so it
+# reports the advisory and audit.yml carries `--ignore RUSTSEC-2023-0071`
+# with the reachability argument written out in audit.toml.
+#
+# So this file needs no ignore and audit.yml does. That is not an
+# inconsistency to tidy away by adding one here or dropping one there.
+#
+# What this comment used to say was that the advisory was "no longer
+# reachable" because "the event-listener bump in #124 removed the last
+# sqlx-mysql path". event-listener has nothing to do with rsa, #124 did
+# not touch that path, and reading this file alone would have led someone
+# to delete a suppression that is still load-bearing.
+#
+# The condition that retires the ignore in audit.yml is sqlx-mysql leaving
+# Cargo.lock, which happens when sqlx drops it from its default resolution
+# or the mysql feature is excluded at the resolver level. Check with the
+# two `cargo tree` lines above plus a plain `grep sqlx-mysql Cargo.lock`;
+# the grep is the one that matters, because it is what cargo-audit reads.
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+# Every license currently in the helmly-agent dep tree (verified
+# 2026-08-17 against the develop lockfile). Adding a crate with
+# a new license requires a deliberate review.
+allow = [
+	"Apache-2.0",
+	"Apache-2.0 WITH LLVM-exception",
+	"MIT",
+	"MIT-0",
+	"BSD-1-Clause",
+	"BSD-3-Clause",
+	"BSL-1.0",
+	"ISC",
+	"Unicode-3.0",
+	"Unlicense",
+	"Zlib",
+	"CC0-1.0",
+	"CDLA-Permissive-2.0",
+]
+
+[bans]
+# Warn (not deny) on duplicate crate versions: the only duplicates
+# today come from Windows-target feature gates and dev-only
+# dependencies. None of them reach the Linux production binary;
+# investigate each warning before denying.
+multiple-versions = "warn"
+# Wildcard version requirements. This was "warn" for one reason: the
+# agent's single git dependency, `podup`, which cargo-deny flags as a
+# wildcard because git deps have no version requirement. #160 removed
+# that dependency, since no code referenced it, so the exemption has
+# nothing left to exempt.
+#
+# Left at "warn" rather than flipped to "deny" in the same change that
+# removed its reason, because promoting a gate and removing its only
+# known subject at once means a green run proves neither. Flip it in its
+# own change and read the run.
+wildcards = "warn"
+allow-wildcard-paths = true
+highlight = "all"
+
+[sources]
+# Crates from crates.io. There was one org-internal git source,
+# `podup`, until #160 removed it as an unused dependency; the agent
+# reaches podman through `podman compose` at runtime, not through a
+# linked crate. No git source remains.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Empty on purpose. It listed Glyndor/podup, and #160 removed that
+# dependency. Leaving the entry would mean a future git dependency on
+# that URL is admitted without anyone deciding to admit it, which is a
+# standing permission for something absent rather than a record of
+# something present.
+allow-git = []

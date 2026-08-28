@@ -1,0 +1,46 @@
+# cargo-audit configuration for helmly-agent.
+#
+# cargo-audit (run via .github/workflows/audit.yml) fails on any RUSTSEC
+# advisory — vulnerabilities by default, *and* warnings (`--deny warnings`)
+# and yanked (`--deny warnings` includes yanked). The gate ignores the
+# one unreachable RUSTSEC advisory; the rest must be fixed in-band.
+#
+# Re-evaluate each entry below at the cadence noted.
+# Re-check on: every sqlx release + every 6 months.
+
+[advisories]
+
+# RUSTSEC-2023-0071 — `rsa` 0.9.10 Marvin-Attack timing sidechannel.
+# Severity 5.9 (medium). No fixed upgrade is available upstream.
+# Reachability in helmly-agent: NOT IN THE BINARY.
+#
+# How I measured (2026-08-17):
+#   $ cargo metadata --format-version 1 |
+#     jq '.packages[] | select(.name=="helmly-agent") |
+#         .dependencies[] | select(.name=="rsa")'
+#   # → empty: helmly-agent has no direct edge to rsa.
+#
+#   $ cargo metadata --format-version 1 |
+#     jq '. as $a | $a.packages[] |
+#         select(.dependencies[] | .name=="rsa") | .name'
+#   # → sqlx-mysql (only reverse-dependency of rsa in Cargo.lock).
+#
+#   $ cargo tree -i rsa
+#   # → only sqlx-mysql appears; helmly-agent absent.
+#
+# Why the dep is unreachable: `sqlx-mysql` is enabled as a
+# build-time driver for `sqlx-macros-core` (driven by sqlx's `macros`
+# feature for compile-time query verification). Proc-macros compile
+# in their own compilation unit and are NOT linked into the final
+# binary. Confirmed by the absent direct edge from helmly-agent to rsa.
+#
+# When this would change: enabling a sqlx feature that pulls the
+# `mysql` driver into the runtime path (none currently do — the
+# only paths to sqlx-mysql are through sqlx-macros-core's driver
+# verification), OR switching to a non-default sqlx backend.
+#
+# Re-check cadence: every sqlx release + every 6 months. Drop this
+# entry when the source dep (sqlx-mysql) is gone from Cargo.lock.
+ignore = [
+    "RUSTSEC-2023-0071",  # rsa 0.9.10 — Marvin-Attack; unreachable (proc-macro driver only)
+]

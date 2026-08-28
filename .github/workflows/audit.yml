@@ -1,0 +1,85 @@
+name: Audit
+
+on:
+  schedule:
+    # Weekly Monday 06:00 UTC.
+    - cron: '0 6 * * 1'
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+# cargo-audit + cargo-deny gates, inlined. The org's
+# `rust-audit.yml` reusable offers no input to pass extra `--ignore`
+# flags and hardcodes `cargo audit --deny warnings` — and
+# cargo-audit 0.22.2 has a regression where audit.toml's
+# `[advisories] ignore = [...]` is not picked up from the project
+# root (verified: `cargo audit` runs from the working-directory but
+# does not read `./audit.toml` unless it's at `~/.cargo/audit.toml`).
+# This workflow inlines both cargo-audit and cargo-deny with the
+# toolchain pinned (so a floating preinstalled Rust can't silently
+# change the advisory surface). Reachability analysis for each
+# ignore lives in `audit.toml` (project root); license policy in
+# `deny.toml`. When cargo-audit is bumped past the 0.22.2 regression,
+# delete the inlined cargo-audit step and call the reusable again.
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    env:
+      TOOLCHAIN: '1.97'
+      AUDIT_VERSION: '0.22.2'
+      DENY_VERSION: '0.20.2'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install toolchain
+        env:
+          TOOLCHAIN: ${{ env.TOOLCHAIN }}
+        run: |
+          rustup toolchain install "$TOOLCHAIN" --profile minimal
+          rustup default "$TOOLCHAIN"
+
+      - name: Install cargo-audit
+        env:
+          TOOL_VERSION: ${{ env.AUDIT_VERSION }}
+        run: command -v cargo-audit >/dev/null || cargo install cargo-audit --version "=$TOOL_VERSION" --locked
+
+      - name: Install cargo-deny
+        env:
+          TOOL_VERSION: ${{ env.DENY_VERSION }}
+        run: command -v cargo-deny >/dev/null || cargo install cargo-deny --version "=$TOOL_VERSION" --locked
+
+      - name: Run cargo audit
+        # `--deny warnings` covers vulnerabilities + soundness +
+        # unmaintained + unsound + yanked — every advisory class. We
+        # ignore only what's documented in `audit.toml` with a measured
+        # reachability argument.
+        #
+        # `--no-yanked` is deliberately absent. It was added to silence
+        # `spin 0.9.8`, a lockfile ghost that `cargo tree --target all -i
+        # spin` shows is in no build graph, and silencing it was defensible
+        # on its own. The problem is that the flag is class-wide: it went
+        # on to hide `chacha20 0.10.0`, which `cargo tree` resolves through
+        # `rand 0.10.1` into the binary, and which was yanked too. One
+        # reachable crate stayed invisible for as long as the flag was set,
+        # with nothing to signal that the situation had changed.
+        #
+        # Both are bumped in `Cargo.lock` now (chacha20 0.10.2, spin
+        # 0.9.9), so the flag is not needed and the next yanked crate will
+        # surface instead of arriving pre-forgiven.
+        #
+        # A yanked crate is a release-deprecation signal, not a
+        # vulnerability, so the fix is a lockfile bump rather than an
+        # ignore. If one ever cannot be bumped, record its reachability
+        # measurement in `audit.toml` alongside the RUSTSEC ignore. Do not
+        # reintroduce a flag that switches off the whole class.
+        run: cargo audit --deny warnings --ignore RUSTSEC-2023-0071
+
+      - name: Run cargo deny
+        run: cargo deny check
