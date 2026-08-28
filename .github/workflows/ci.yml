@@ -67,13 +67,6 @@ jobs:
   shell:
     uses: Glyndor/.github/.github/workflows/shell-ci.yml@d5041b038b7d4935e75400dff612962e6fa14893 # v1.21.0
 
-  # Signed-off-by on every commit. The DCO gate is advisory here rather than
-  # required, so it reports rather than blocks, which is the right order:
-  # promote it to a required check only after it has run on real pull requests
-  # and been seen to fail for its own reason.
-  dco:
-    uses: Glyndor/.github/.github/workflows/dco.yml@d5041b038b7d4935e75400dff612962e6fa14893 # v1.21.0
-
   # actionlint plus the org's own workflow checks. The one that earns its
   # place here is tooling-isolation: it fails when a job that holds a secret
   # also installs third-party tooling, which is what `release.yml` did until
