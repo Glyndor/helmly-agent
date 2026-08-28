@@ -702,6 +702,37 @@ the issue reference where one exists.
   validation on the inner `command` JSON object beyond
   `serde_json::Value`.
 
+### 5.x The repository itself is a trust boundary this document did not model
+
+Every gap above is about the running agent. This one is about how the agent
+gets built, and it was missing from a document whose whole subject is what an
+attacker can reach.
+
+A required status check matches **by name**. So a contributor with write
+access can, in one pull request, replace a thin caller with a stub job whose
+display name matches the required check and whose body is `exit 0`, and the
+real gate never runs. The reusable cannot close this: the caller lives in the
+repository the pull request edits, and GitHub runs the pull request's version
+of it.
+
+It reaches further here than in a repository of metadata. `release.yml` holds
+the org's Ed25519 signing key in the environment of its publish job, and this
+product is a root daemon that provisions mTLS material and executes commands
+sent to it. A neutralised gate on this repository is a signed artifact nobody
+checked.
+
+The org accepts this while it is effectively single-maintainer, the owner plus
+Dependabot, and `standards/ci` says so explicitly. It is not zero risk: the
+2026-07 incident, where an unrecognised org member briefly held write on every
+repository, is the scenario where it bites.
+
+**The mitigation is ruleset-side and applies the moment a human collaborator
+is added:** require review from Code Owners on `.github/workflows/**`, so a
+pull request that neutralises a caller cannot merge without the owner seeing
+the diff. `.github/CODEOWNERS` now exists, which is the precondition for that
+rule rather than the rule itself. Until a collaborator exists, the control is
+that the owner reviews and merges every pull request.
+
 ## 6. Out of scope
 
 This document deliberately does not model:
