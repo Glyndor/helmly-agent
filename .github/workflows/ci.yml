@@ -16,7 +16,7 @@ jobs:
     # gate's surface has not changed in 1.14.x → 1.15.x; the SHA is
     # still the right one. Per `standards/ci/index.md:20` the comment
     # format is `@<sha> # vX.Y.Z`.
-    uses: Glyndor/.github/.github/workflows/rust-ci.yml@d5041b038b7d4935e75400dff612962e6fa14893 # v1.21.0
+    uses: ./.github/workflows/reusable-rust-ci.yml
     with:
       # Coverage ratchet. The number went DOWN in this pull request and
       # the measurement got stricter, which is worth reading carefully
@@ -42,11 +42,21 @@ jobs:
       # the coverage, never silently.
       coverage-threshold: 45
 
-  pin-policy:
-    uses: Glyndor/.github/.github/workflows/pin-policy-reusable.yml@d5041b038b7d4935e75400dff612962e6fa14893 # v1.21.0
+  # pin-policy is deliberately gone rather than copied. Its script matches
+  # exactly one thing, `Glyndor/.github/.github/workflows/<X>.yml@<sha>`
+  # (scripts/pin-policy.py:52), and this repository now has none of those.
+  # Copying it would have produced a required-shaped check that can never
+  # fail, which is worse than no check: it teaches everyone that green
+  # means verified when it means "found nothing to look at".
+  #
+  # What it actually bought was "the versions you pin are current". That
+  # question survives, it just moved: the third-party actions pinned inside
+  # the reusables below are now files in this repository, so Dependabot's
+  # github-actions ecosystem sees them and opens the bumps directly. The
+  # freshness watcher below is what notices if it stops.
 
   dependabot-freshness:
-    uses: Glyndor/.github/.github/workflows/dependabot-freshness.yml@d5041b038b7d4935e75400dff612962e6fa14893 # v1.21.0
+    uses: ./.github/workflows/reusable-dependabot-freshness.yml
     with:
       max-age-days: 15
 
@@ -65,7 +75,7 @@ jobs:
   # ruleset would be satisfied by a job that never ran. `shell / shellcheck`
   # does run, and is the one worth promoting once it has been seen to fail.
   shell:
-    uses: Glyndor/.github/.github/workflows/shell-ci.yml@d5041b038b7d4935e75400dff612962e6fa14893 # v1.21.0
+    uses: ./.github/workflows/reusable-shell-ci.yml
 
   # actionlint plus the org's own workflow checks. The one that earns its
   # place here is tooling-isolation: it fails when a job that holds a secret
@@ -76,4 +86,4 @@ jobs:
   # the check reads a run block line by line, so the `--require-hashes`
   # marker was not on the line it had to exempt.
   workflow-lint:
-    uses: Glyndor/.github/.github/workflows/workflow-lint.yml@d5041b038b7d4935e75400dff612962e6fa14893 # v1.21.0
+    uses: ./.github/workflows/reusable-workflow-lint.yml

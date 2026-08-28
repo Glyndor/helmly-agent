@@ -97,7 +97,7 @@ jobs:
 
   ci:
     needs: verify
-    uses: Glyndor/.github/.github/workflows/rust-ci.yml@d5041b038b7d4935e75400dff612962e6fa14893 # v1.21.0
+    uses: ./.github/workflows/reusable-rust-ci.yml
 
   build:
     name: Build ${{ matrix.arch }}
