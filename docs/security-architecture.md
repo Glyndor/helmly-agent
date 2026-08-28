@@ -757,8 +757,10 @@ The file carrying it is fetched without authentication. `Glyndor/helmly`'s
 no checksum, and no version: the URL names a **branch**, so what runs is
 whatever is on that branch at that moment.
 
-The exact URL depends on which branch of `helmly` is read, and the two have
-diverged (six commits each way as of 2026-08-28), so it is worth naming:
+The exact URL depends on which branch of `helmly` is read, so it is worth
+naming. `develop` is ahead by six commits of real work; `main` carries six
+promotion merge commits and no unique work of its own, which is the ordinary
+shape and not a fork:
 
     helmly develop   raw.githubusercontent.com/Glyndor/helmly-agent/main/setup-agent.sh
     helmly main      raw.githubusercontent.com/Glyndor/panel-agent/main/setup-agent.sh
@@ -792,10 +794,29 @@ not a control, and it will stop protecting anything the moment it is fixed.
 
 It is not remotely exploitable by an internet attacker as things stand. The
 finding is that the product ships a signature chain whose root is
-unauthenticated, so the chain proves less than its documentation implies. Nor
-can the agent close this itself: `install.sh` lives in `Glyndor/helmly`, so the
-fix is cross-repo. Tracked in #181, with the destination being the installer
-shipped inside the signed `.deb` rather than curled.
+unauthenticated, so the chain proves less than its documentation implies. The
+agent cannot close it alone: `install.sh` lives in `Glyndor/helmly`, so the fix
+is cross-repo. Tracked in #181.
+
+**State of the fix, which is written out rather than summarised as done because
+an operator is still exposed.** Both halves exist and neither has reached one:
+
+- Producing half, live. `v2.0.1` publishes `setup-agent.sh` and
+  `update-agent.sh` as signed release assets alongside the binaries, all
+  derived from one `RELEASE_ARTIFACTS` list in `release.yml` so a new asset
+  cannot ship unsigned with the gates still green.
+- Consuming half, written but not served. `Glyndor/helmly#151` makes
+  `install.sh` fetch both scripts from a release and verify them against a key
+  pinned there, failing closed when it cannot verify. It is on that
+  repository's `develop`, and `main` is the branch operators are served, so
+  the old unverified fetch is still what runs.
+
+What the pair buys, stated exactly, because "now it is signed" claims more:
+write access to this repository alone stops being enough to replace the
+installer, since the release signing key is a separate secret. It is not a
+defence against tampering with `helmly`'s `install.sh`, which pins the key and
+is itself distributed by cloning that repository. Closing that hop is what the
+`.deb` route would do, and it is not what shipped here.
 
 ## 6. Out of scope
 
