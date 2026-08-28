@@ -94,7 +94,7 @@ jobs:
       # `if: inputs.test-command != ''`, so `shell / test` skipped on every
       # run, and a skipped check reports Success. It was therefore unfit to
       # be a required check. With a command it runs, and it can be promoted.
-      test-command: ./tests/setup-agent-signature.test.sh
+      test-command: ./tests/run.sh
       apt-packages: python3-cryptography
 
   # actionlint plus the org's own workflow checks. The one that earns its
