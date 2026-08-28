@@ -27,7 +27,7 @@ tower-http = { version = "0.6", features = ["trace", "cors", "set-header", "limi
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "migrate", "ipnetwork", "macros"] }
 
 # crypto — command authorization & audit log
-ed25519-dalek = { version = "2", features = ["pkcs8", "zeroize"] }
+ed25519-dalek = { version = "3", features = ["pkcs8", "zeroize"] }
 sha2 = "0.11"
 hex = "0.4"
 base64ct = { version = "1", features = ["alloc"] }
