@@ -59,7 +59,7 @@ uuid = { version = "1", features = ["v7", "serde"] }
 # system interaction
 nix = { version = "0.31", features = ["process", "signal", "fs"] }
 
-podup = { git = "https://github.com/Glyndor/podup", tag = "v0.9.0" }
+podup = { git = "https://github.com/Glyndor/podup", tag = "v5.0.0" }
 
 [dev-dependencies]
 # Already in the tree as rcgen's `x509-parser` feature; declared here so the
