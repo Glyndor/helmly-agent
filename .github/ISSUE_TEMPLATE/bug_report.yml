@@ -1,0 +1,70 @@
+name: Bug report
+description: Report a bug or unexpected behavior in helmly-agent
+title: "[bug]: "
+labels: ["type:bug", "status:triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before submitting, please search existing issues to avoid duplicates.
+        **Security issue? Do NOT file it here**. Use the Security tab, "Report a vulnerability".
+  - type: input
+    id: component
+    attributes:
+      label: Component
+      description: Which subsystem is affected (e.g. podman, nftables, wireguard, update, systemd unit, tls, audit sync).
+      placeholder: podman
+    validations:
+      required: true
+  - type: input
+    id: agent-version
+    attributes:
+      label: Agent version
+      description: The output of `helmly-agent --version` on the affected host, or the tag it was installed from.
+      placeholder: v1.4.1
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: distribution
+    attributes:
+      label: Distribution and kernel
+      description: The output of `cat /etc/os-release` and `uname -r` on the affected host.
+      placeholder: Ubuntu 24.04, kernel 6.8.0-31-generic
+    validations:
+      required: true
+  - type: textarea
+    id: runtime-prereqs
+    attributes:
+      label: Required services present?
+      description: Confirm whether the agent's dependencies are installed and reachable on this host. `command -v nft && nft --version`, `command -v wg && wg --version`, `command -v podman && podman --version`. State the version output for each, or note that one is missing.
+      placeholder: |
+        nft: nftables v1.0.9 (installed)
+        wg: wireguard-tools v1.0.20210925 (installed)
+        podman: podman version 5.1.2 (installed)
+    validations:
+      required: true
+  - type: textarea
+    id: systemd
+    attributes:
+      label: systemd unit state and journal
+      description: The output of `systemctl status helmly-agent` (no `journalctl -u helmly-agent` excerpt is too short, paste the last ~100 lines or so). **Redact secrets, tokens, public hostnames and IPs.**
+      render: shell
+    validations:
+      required: true
