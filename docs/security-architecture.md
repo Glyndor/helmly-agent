@@ -752,12 +752,26 @@ Everything downstream — the binary signature, `SHA256SUMS`, the release pin
 check — rests on that constant being the real key.
 
 The file carrying it is fetched without authentication. `Glyndor/helmly`'s
-`install.sh:106-115` runs `curl` against
-`https://raw.githubusercontent.com/Glyndor/helmly-agent/main/setup-agent.sh`,
-then `chmod 700`, then `exec bash`, as root on a fresh host. There is no
-signature, no checksum, and no version: the URL names a **branch**, so what runs
-is whatever is on `main` at that moment. The `v2.0.0` release publishes six
-signed assets and `setup-agent.sh` is not among them.
+`install.sh:106-115` runs `curl` against a `raw.githubusercontent.com` URL, then
+`chmod 700`, then `exec bash`, as root on a fresh host. There is no signature,
+no checksum, and no version: the URL names a **branch**, so what runs is
+whatever is on that branch at that moment.
+
+The exact URL depends on which branch of `helmly` is read, and the two have
+diverged (six commits each way as of 2026-08-28), so it is worth naming:
+
+    helmly develop   raw.githubusercontent.com/Glyndor/helmly-agent/main/setup-agent.sh
+    helmly main      raw.githubusercontent.com/Glyndor/panel-agent/main/setup-agent.sh
+
+`main` is the branch actually served to operators, and it still names this
+repository under its pre-rename name. Measured, both return HTTP 200 with
+byte-identical content (sha256 `6e7b3048...36256c`), because GitHub serves a
+renamed repository under its old name. The stale name is cosmetic; the missing
+signature is not, and it is the same on both branches.
+
+`v2.0.0` published six signed assets and `setup-agent.sh` was not among them.
+`v2.0.1` publishes it and `update-agent.sh` signed, which is the producing half
+of the fix and changes nothing on its own: the consumer still does not verify.
 
 **What an attacker gains.** Whoever controls that fetch controls `PUB_KEYS_B64`,
 and therefore decides which binary verifies. Every signature check in 4.8 then
@@ -766,6 +780,15 @@ access to this repository's default branch — which is 5.x, and the two gaps
 compound — or TLS interception between the operator and
 `raw.githubusercontent.com`, which is the scenario signing exists to answer and
 is not otherwise addressed anywhere in the install path.
+
+One qualification on reachability, because it cuts the other way and belongs
+here rather than in a footnote. `install.sh`'s own documented invocation,
+`curl -fsSL .../install.sh | sudo bash`, currently fails on `main` before it
+reaches any of this: `install.sh:30` reads `${BASH_SOURCE[0]}` under
+`set -euo pipefail`, and piped into `bash` that array element is unset, so the
+script exits 1 on "unbound variable". The path described above is live only for
+an operator running the script from a checkout. That is a defect in `helmly`,
+not a control, and it will stop protecting anything the moment it is fixed.
 
 It is not remotely exploitable by an internet attacker as things stand. The
 finding is that the product ships a signature chain whose root is
