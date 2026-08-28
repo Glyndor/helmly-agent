@@ -8,13 +8,20 @@ system maintenance.
 
 ## Security model
 
-- **Transport** — WireGuard + mTLS. The agent never accepts plain connections.
-- **Command integrity** — every command is Ed25519-signed with a nonce and a
-  30-second timestamp window; replays are rejected even on a compromised
+- **Transport.** WireGuard plus mTLS. TLS is the default and the agent refuses
+  to start when the certificates are absent or malformed. Plain HTTP requires
+  setting `INSECURE_PLAIN_HTTP=1`, which exists for local development and turns
+  off the listener's only authenticator.
+- **Command integrity.** Every command is Ed25519-signed with a nonce and a
+  30-second timestamp window, so replays are rejected even on a compromised
   transport.
-- **Audit log** — hash-chained, append-only, synced to the dashboard in real
+- **Audit log.** Hash-chained, append-only, synced to the dashboard in real
   time.
-- **Auto-update** — binaries are Ed25519-signature-verified before any swap.
+- **Auto-update.** Binaries are Ed25519-signature-verified before any swap.
+
+The full threat model, with the trust boundaries, the control implementing each
+one, and the gaps that are open, is in
+[`docs/security-architecture.md`](docs/security-architecture.md).
 
 ## Build
 
