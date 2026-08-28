@@ -14,7 +14,89 @@ permissions:
   contents: read
 
 jobs:
+  # Gating verify job. Nothing is built, signed or published until every
+  # gate below passes, because a release runs once and its assets are
+  # immutable. A mistake caught here costs a re-tag; the same mistake
+  # caught after `gh release create` cannot be corrected at all.
+  verify:
+    name: Verify tag matches crate version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          persist-credentials: false
+
+      - name: Validate tag format
+        env:
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          if ! echo "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Tag '${TAG}' does not match required format v<major>.<minor>.<patch>."
+            exit 1
+          fi
+
+      - name: Tag must equal Cargo.toml version
+        # This replaces the step that used to `sed` the version out of the
+        # tag and into Cargo.toml during the build. That had the discipline
+        # backwards: it rewrote the manifest so it could not disagree,
+        # which turns a detectable drift into a fabricated match and leaves
+        # the repository's own committed version wrong. The version bump is
+        # a reviewed commit; the tag only names it.
+        env:
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          VERSION="${TAG#v}"
+          CRATE_VERSION="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
+          if [ "$VERSION" != "$CRATE_VERSION" ]; then
+            echo "::error::Tag ${TAG} does not match Cargo.toml version ${CRATE_VERSION}; bump the manifest in a commit before tagging."
+            exit 1
+          fi
+          echo "Releasing version ${VERSION}."
+
+      - name: Cargo.lock must record the released version
+        # `cargo build --locked` in the build job would also catch a stale
+        # lockfile, but only after the matrix has started. Gate it here so
+        # both version files are proven to agree at the same fail-fast
+        # point. Match the version on the line right after this crate's own
+        # name entry: a bare `version = ` grep would happily match any
+        # dependency that shares the number.
+        run: |
+          CRATE_VERSION="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
+          LOCK_VERSION="$(awk -F'"' '/^name = "helmly-agent"$/{getline; if ($0 ~ /^version = /) {print $2; exit}}' Cargo.lock)"
+          if [ "$LOCK_VERSION" != "$CRATE_VERSION" ]; then
+            echo "::error::Cargo.lock records helmly-agent ${LOCK_VERSION:-<none>} but Cargo.toml is at ${CRATE_VERSION}; run cargo update -p helmly-agent so the lockfile matches."
+            exit 1
+          fi
+          echo "Cargo.lock version ${LOCK_VERSION} matches."
+
+      - name: Tagged commit must be reachable from main
+        # Releases are cut only from `main` (develop → main merge, then
+        # tag). Refuse a tag pushed anywhere else, so code that never went
+        # through the promotion PR cannot be published.
+        run: |
+          git fetch --unshallow --no-tags origin main 2>/dev/null \
+            || git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor HEAD FETCH_HEAD; then
+            echo "::error::Tagged commit is not reachable from origin/main; releases must be cut from main."
+            exit 1
+          fi
+          echo "Tagged commit is reachable from origin/main."
+
+      - name: Audit dependencies for known advisories
+        # A RUSTSEC advisory in a pinned dependency must block publishing
+        # rather than wait for the weekly cron: the weekly run tells us
+        # about a release we already shipped. Flags are kept identical to
+        # `audit.yml` so the two gates cannot drift into disagreeing about
+        # what is acceptable; the one ignore is justified in `audit.toml`.
+        run: |
+          cargo install cargo-audit --version "=0.22.2" --locked
+          cargo audit --deny warnings --ignore RUSTSEC-2023-0071
+
   ci:
+    needs: verify
     uses: Glyndor/.github/.github/workflows/rust-ci.yml@d5041b038b7d4935e75400dff612962e6fa14893 # v1.21.0
 
   build:
@@ -41,6 +123,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          persist-credentials: false
 
       - name: Install toolchain
         run: |
@@ -66,39 +151,89 @@ jobs:
         if: ${{ matrix.use_cross }}
         run: cargo install cross --locked
 
-      - name: Set version from tag
-        run: |
-          TAG="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
-          VERSION="${TAG#v}"
-          sed -i "0,/^version = \"[^\"]*\"/{s/^version = \"[^\"]*\"/version = \"${VERSION}\"/}" Cargo.toml
-          echo "Set agent version to ${VERSION}"
-
       - name: Build agent (musl static)
+        # `--locked` so the build resolves the reviewed lockfile instead of
+        # silently picking up a newer transitive at tag time. The release
+        # must ship the dependency set the audit gate above measured.
         env:
           SQLX_OFFLINE: "true"
         run: |
           if [ "${{ matrix.use_cross }}" = "true" ]; then
-            cross build --release --target ${{ matrix.rust-target }}
+            cross build --release --locked --target ${{ matrix.rust-target }}
           else
-            cargo build --release --target ${{ matrix.rust-target }}
+            cargo build --release --locked --target ${{ matrix.rust-target }}
           fi
 
-      - name: Sign agent binary
+      - name: Stage the artifact
+        run: |
+          cp "target/${{ matrix.rust-target }}/release/helmly-agent" \
+             "helmly-agent-linux-${{ matrix.arch }}"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: helmly-agent-linux-${{ matrix.arch }}
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: agent-${{ matrix.arch }}
+          path: helmly-agent-linux-${{ matrix.arch }}
+          retention-days: 1
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      # Signing lives here rather than in `build` on purpose. The build
+      # jobs install third-party tooling (`cargo install cross`,
+      # `apt-get install musl-tools`), and the standard's rule is that a
+      # job which installs third-party tooling holds no secrets. Under the
+      # old layout one compromised build script stood next to the org's
+      # release key. This job installs nothing but a hash-pinned virtualenv,
+      # so the key is only ever in the job that needs it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          merge-multiple: true
+          path: dist
+
+      - name: Create the signing virtualenv
+        # A fresh venv with `--require-hashes` so the pinned cryptography is
+        # the one that runs. Installing into the runner's system Python
+        # cannot honour a pin it is not allowed to overwrite, and a
+        # system-managed `cryptography` that pip can neither uninstall nor
+        # replace has broken releases in this org before.
+        run: |
+          python3 -m venv "$RUNNER_TEMP/signvenv"
+          "$RUNNER_TEMP/signvenv/bin/python" -m pip install --quiet \
+            --require-hashes -r .github/scripts/sign-requirements.txt
+
+      - name: Sign the binaries
         env:
           GLYNDOR_RELEASE_ED25519_KEY: ${{ secrets.GLYNDOR_RELEASE_ED25519_KEY }}
-        run: |
-          pip install --quiet cryptography
-          BINARY="target/${{ matrix.rust-target }}/release/helmly-agent"
-          ARTIFACT="helmly-agent-linux-${{ matrix.arch }}"
-          cp "$BINARY" "$ARTIFACT"
-          # The key is read from GLYNDOR_RELEASE_ED25519_KEY (env), never argv,
-          # so it does not appear in the runner's process table.
-          python3 .github/scripts/sign.py "$ARTIFACT"
-
-      - name: Verify signature against the pinned install key
+        working-directory: dist
         run: |
           set -euo pipefail
-          ARTIFACT="helmly-agent-linux-${{ matrix.arch }}"
+          # The key is read from the environment, never argv, so it does not
+          # appear in the runner's process table. sign.py exits non-zero when
+          # the secret is absent, so an unsigned artifact is never published.
+          for arch in x86_64 arm64; do
+            "$RUNNER_TEMP/signvenv/bin/python" "$GITHUB_WORKSPACE/.github/scripts/sign.py" \
+              "helmly-agent-linux-${arch}"
+          done
+
+      - name: Verify signatures against the pinned install key
+        run: |
+          set -euo pipefail
           # Gate: the release must verify against the exact public key the
           # installer and self-update pin, or a fresh install would reject it
           # (the failure that shipped a broken v1.4.0). Fail the build here,
@@ -116,43 +251,62 @@ jobs:
             exit 1
           fi
           echo "installer/self-update pin: $pin_setup"
-          python3 .github/scripts/verify-release.py "$ARTIFACT" "$pin_setup"
+          # Run through the pinned venv, not the runner's system Python:
+          # verify-release.py imports `cryptography`, and the whole point of
+          # the venv is that the release never depends on whatever version
+          # the runner image happens to carry.
+          for arch in x86_64 arm64; do
+            "$RUNNER_TEMP/signvenv/bin/python" .github/scripts/verify-release.py \
+              "dist/helmly-agent-linux-${arch}" "$pin_setup"
+          done
 
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: helmly-agent-linux-${{ matrix.arch }}
+      - name: Generate and sign SHA256SUMS
+        # A signed manifest of every published asset, so a consumer can
+        # check the whole set with one signature check rather than trusting
+        # each download separately. Generated from the files on disk, at
+        # the only moment their digests are knowable, never from a list
+        # typed into the workflow.
+        env:
+          GLYNDOR_RELEASE_ED25519_KEY: ${{ secrets.GLYNDOR_RELEASE_ED25519_KEY }}
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          sha256sum helmly-agent-linux-x86_64 helmly-agent-linux-arm64 > SHA256SUMS
+          cat SHA256SUMS
+          "$RUNNER_TEMP/signvenv/bin/python" "$GITHUB_WORKSPACE/.github/scripts/sign.py" SHA256SUMS
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: agent-${{ matrix.arch }}
-          path: |
-            helmly-agent-linux-${{ matrix.arch }}
-            helmly-agent-linux-${{ matrix.arch }}.sig
-          retention-days: 1
-
-  release:
-    name: Publish release
-    needs: build
-    runs-on: ubuntu-latest
-
-    permissions:
-      contents: write
-
-    steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          merge-multiple: true
+      - name: Every declared asset must exist before publishing
+        # Existence, not declaration. `gh release create` would happily
+        # publish a short set and the release is immutable afterwards, so
+        # assert the full set is on disk first.
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          missing=0
+          for f in \
+            helmly-agent-linux-x86_64 helmly-agent-linux-x86_64.sig \
+            helmly-agent-linux-arm64 helmly-agent-linux-arm64.sig \
+            SHA256SUMS SHA256SUMS.sig
+          do
+            if [ ! -s "$f" ]; then
+              echo "::error::release asset ${f} is missing or empty"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ]
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        working-directory: dist
         run: |
           gh release create "$TAG" \
             --generate-notes \
             helmly-agent-linux-x86_64 \
             helmly-agent-linux-x86_64.sig \
             helmly-agent-linux-arm64 \
-            helmly-agent-linux-arm64.sig
+            helmly-agent-linux-arm64.sig \
+            SHA256SUMS \
+            SHA256SUMS.sig
