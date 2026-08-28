@@ -524,3 +524,85 @@ fn bearer_empty_vs_nonempty_rejected() {
 	assert!(!verify_bearer("", "secret-token-123"));
 	assert!(!verify_bearer("secret-token-123", ""));
 }
+
+// ---------------------------------------------------------------------------
+// Wire compatibility of the verifier, pinned to the standard rather than to a
+// crate version.
+//
+// The agent verifies signatures the DASHBOARD produces, and the two are not
+// on the same ed25519-dalek. helmly's `internal/Cargo.toml` declares version
+// "2"; this crate is on 3. Ed25519 is RFC 8032 and both sides exchange raw
+// 32-byte keys and 64-byte signatures, so a version skew is expected to be
+// invisible. "Expected to be" is not a measurement, and this is the control
+// the whole agent rests on, so these assert against the RFC's own vectors.
+//
+// A known-answer test is the right shape here precisely because it does not
+// know which dalek is underneath: it would fail identically if a future
+// version changed byte order, key encoding, or acceptance criteria.
+// ---------------------------------------------------------------------------
+
+fn hex32(s: &str) -> [u8; 32] {
+	let mut out = [0u8; 32];
+	for (i, b) in out.iter_mut().enumerate() {
+		*b = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).expect("hex");
+	}
+	out
+}
+
+fn hex64(s: &str) -> [u8; 64] {
+	let mut out = [0u8; 64];
+	for (i, b) in out.iter_mut().enumerate() {
+		*b = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).expect("hex");
+	}
+	out
+}
+
+/// RFC 8032 section 7.1, TEST 1: empty message.
+#[test]
+fn rfc8032_test_1_empty_message_verifies() {
+	use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+	let pk = VerifyingKey::from_bytes(&hex32(
+		"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+	))
+	.expect("public key");
+	let sig = Signature::from_bytes(&hex64(
+		"e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155\
+		 5fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b",
+	));
+	pk.verify(b"", &sig).expect("RFC 8032 TEST 1 must verify");
+}
+
+/// RFC 8032 section 7.1, TEST 2: one-byte message.
+#[test]
+fn rfc8032_test_2_one_byte_message_verifies() {
+	use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+	let pk = VerifyingKey::from_bytes(&hex32(
+		"3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+	))
+	.expect("public key");
+	let sig = Signature::from_bytes(&hex64(
+		"92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da\
+		 085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00",
+	));
+	pk.verify(&[0x72], &sig)
+		.expect("RFC 8032 TEST 2 must verify");
+}
+
+/// The negative half. A vector that must NOT verify, so the two above are
+/// not passing because `verify` accepts everything.
+#[test]
+fn rfc8032_vector_with_a_flipped_message_byte_is_rejected() {
+	use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+	let pk = VerifyingKey::from_bytes(&hex32(
+		"3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+	))
+	.expect("public key");
+	let sig = Signature::from_bytes(&hex64(
+		"92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da\
+		 085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00",
+	));
+	assert!(
+		pk.verify(&[0x73], &sig).is_err(),
+		"a one-bit change in the message must not verify"
+	);
+}
