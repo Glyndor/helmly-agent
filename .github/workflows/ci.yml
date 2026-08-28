@@ -33,3 +33,27 @@ jobs:
     uses: Glyndor/.github/.github/workflows/dependabot-freshness.yml@d4bbc5b6ec0c351ca4cb17d948ceaad818da4078 # v1.18.1
     with:
       max-age-days: 15
+
+  # The two installer scripts are the only shell in the repository, and until
+  # now nothing linted them. Both are clean at shellcheck's strictest level
+  # (`-S style`, 0 findings on setup-agent.sh and update-agent.sh as of this
+  # commit), so adopting the gate costs nothing today and catches the next
+  # edit rather than the next incident. setup-agent.sh is 1250 lines and runs
+  # as root on a fresh server, which is the worst place to find out.
+  #
+  # No `test-command` is passed because there is no shell test suite here.
+  # That is deliberate and it has a consequence worth writing down:
+  # shell-ci.yml:167 guards its `test` job with `if: inputs.test-command != ''`,
+  # so `shell / test` skips on every run, and a skipped check reports Success.
+  # It must therefore not be made a required check while it skips, or the
+  # ruleset would be satisfied by a job that never ran. `shell / shellcheck`
+  # does run, and is the one worth promoting once it has been seen to fail.
+  shell:
+    uses: Glyndor/.github/.github/workflows/shell-ci.yml@d5041b038b7d4935e75400dff612962e6fa14893 # v1.21.0
+
+  # Signed-off-by on every commit. The DCO gate is advisory here rather than
+  # required, so it reports rather than blocks, which is the right order:
+  # promote it to a required check only after it has run on real pull requests
+  # and been seen to fail for its own reason.
+  dco:
+    uses: Glyndor/.github/.github/workflows/dco.yml@d5041b038b7d4935e75400dff612962e6fa14893 # v1.21.0
