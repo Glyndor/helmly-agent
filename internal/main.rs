@@ -12,6 +12,7 @@ mod podman;
 mod server;
 mod state;
 mod sync;
+mod tls_keypair;
 pub mod update;
 mod ws_client;
 
@@ -62,6 +63,21 @@ enum AgentCommand {
     },
     /// Generate a time-ordered UUIDv7 (replaces `python3 -c "import uuid; print(uuid.uuid7())"`).
     GenUuidV7,
+    /// Generate this agent's own mTLS server keypair and print its fingerprint.
+    ///
+    /// The private half is written to disk here and never leaves the host.
+    /// What the operator carries to the dashboard is the fingerprint this
+    /// prints. Refuses to overwrite existing files, so re-running it after
+    /// the dashboard has been told the fingerprint is an error rather than
+    /// a silent identity change.
+    GenTls {
+        /// Every address the dashboard may dial this agent by. Repeatable.
+        #[arg(long = "san", required = true)]
+        sans: Vec<String>,
+        /// Directory to write `agent.crt.der` and `agent.key.der` into.
+        #[arg(long, default_value = "/etc/glyndor/helmly/tls")]
+        out_dir: String,
+    },
 }
 
 #[tokio::main]
@@ -87,6 +103,10 @@ async fn main() -> anyhow::Result<()> {
             ref encoding,
         }) => return agent_gen_rand(*bytes, encoding),
         Some(AgentCommand::GenUuidV7) => return agent_gen_uuid_v7(),
+        Some(AgentCommand::GenTls {
+            ref sans,
+            ref out_dir,
+        }) => return agent_gen_tls(sans, out_dir),
         _ => {}
     }
 
@@ -434,6 +454,36 @@ fn agent_gen_rand(bytes: usize, encoding: &str) -> anyhow::Result<()> {
         other => anyhow::bail!("unknown encoding: {other} (expected hex|base64)"),
     };
     println!("{out}");
+    Ok(())
+}
+
+fn agent_gen_tls(sans: &[String], out_dir: &str) -> anyhow::Result<()> {
+    let dir = std::path::Path::new(out_dir);
+    std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+
+    let kp = tls_keypair::generate(sans)?;
+    let cert_path = dir.join("agent.crt.der");
+    let key_path = dir.join("agent.key.der");
+
+    // Key first. If the certificate write then fails the operator has an
+    // orphan key and a clear error, which is recoverable; the reverse
+    // leaves a certificate whose key never landed and an agent that will
+    // fail to start for a reason the message does not name.
+    tls_keypair::write_secret(&key_path, &kp.key_der)?;
+    tls_keypair::write_secret(&cert_path, &kp.cert_der)?;
+
+    println!("TLS_CERT_DER_FILE={}", cert_path.display());
+    println!("TLS_KEY_DER_FILE={}", key_path.display());
+    println!("valid for {} days", tls_keypair::CERT_VALIDITY_DAYS);
+    println!();
+    println!("Give this fingerprint to the dashboard:");
+    println!("  sha256:{}", kp.fingerprint_sha256);
+    println!();
+    println!(
+        "TLS_CA_CERT_DER_FILE is still unset. That is the dashboard's CA, used to \
+         verify the client certificate it presents, and only the dashboard can \
+         supply it. The agent will not start until it is configured."
+    );
     Ok(())
 }
 

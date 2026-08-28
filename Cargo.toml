@@ -61,6 +61,13 @@ nix = { version = "0.31", features = ["process", "signal", "fs"] }
 
 podup = { git = "https://github.com/Glyndor/podup", tag = "v0.9.0" }
 
+[dev-dependencies]
+# Already in the tree as rcgen's `x509-parser` feature; declared here so the
+# tests can assert what the generated certificate actually contains. Without
+# it the SAN list is unverifiable from a test, and a wrong SAN fails every
+# handshake with an error that reads like a certificate problem.
+x509-parser = "0.18"
+
 [workspace]
 
 [profile.release]
