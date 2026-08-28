@@ -44,8 +44,8 @@ url = "2"
 
 # Validation of signed-payload inputs (C4). Pulled in as a direct dep
 # so the deny-list walker in internal/handlers/validate.rs compiles
-# without relying on a transitive; the podup 0.9.0 git dep that
-# already brings serde_yaml_ng does not count.
+# without relying on a transitive. It used to say the podup git dep
+# already brought it and did not count; that dep is gone.
 serde_yaml_ng = "0.10"
 
 # WebSocket client (agent → dashboard persistent connection)
@@ -59,7 +59,6 @@ uuid = { version = "1", features = ["v7", "serde"] }
 # system interaction
 nix = { version = "0.31", features = ["process", "signal", "fs"] }
 
-podup = { git = "https://github.com/Glyndor/podup", tag = "v0.9.0" }
 
 [dev-dependencies]
 # Already in the tree as rcgen's `x509-parser` feature; declared here so the
