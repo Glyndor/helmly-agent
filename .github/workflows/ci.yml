@@ -57,3 +57,14 @@ jobs:
   # and been seen to fail for its own reason.
   dco:
     uses: Glyndor/.github/.github/workflows/dco.yml@d5041b038b7d4935e75400dff612962e6fa14893 # v1.21.0
+
+  # actionlint plus the org's own workflow checks. The one that earns its
+  # place here is tooling-isolation: it fails when a job that holds a secret
+  # also installs third-party tooling, which is what `release.yml` did until
+  # #146 moved signing out of the build matrix. Adopting the gate now is what
+  # keeps it from drifting back, and it caught a real regression on the way
+  # in: the pinned `pip install` was wrapped across a line continuation, and
+  # the check reads a run block line by line, so the `--require-hashes`
+  # marker was not on the line it had to exempt.
+  workflow-lint:
+    uses: Glyndor/.github/.github/workflows/workflow-lint.yml@d5041b038b7d4935e75400dff612962e6fa14893 # v1.21.0
