@@ -188,6 +188,25 @@ jobs:
     permissions:
       contents: write
 
+    env:
+      # The single source of truth for what this release publishes. Signing,
+      # verification, `SHA256SUMS` and `gh release create` all derive their
+      # file list from this one, and each derives `<f>.sig` from it rather
+      # than naming signatures separately.
+      #
+      # They used to carry four hand-written copies of the same list. That
+      # shape fails silently in one direction only, and it is the bad one:
+      # an asset added to `gh release create` but forgotten in the signing
+      # loop publishes unsigned, and every gate still passes, because each
+      # gate is checking its own copy of the list. Adding the installer
+      # scripts here is what made the divergence worth removing rather than
+      # documenting.
+      RELEASE_ARTIFACTS: >-
+        helmly-agent-linux-x86_64
+        helmly-agent-linux-arm64
+        setup-agent.sh
+        update-agent.sh
+
     steps:
       # Signing lives here rather than in `build` on purpose. The build
       # jobs install third-party tooling (`cargo install cross`,
@@ -205,6 +224,27 @@ jobs:
         with:
           merge-multiple: true
           path: dist
+
+      - name: Stage the installer scripts as release assets
+        # `setup-agent.sh` is the root of trust for an install: it pins the
+        # release key (`PUB_KEYS_B64`) that every later signature check
+        # uses. Until now it reached the host as a raw file on `main`,
+        # fetched with no signature, no checksum and no version, so the
+        # whole verification chain hung off an unauthenticated download.
+        # Publishing it here makes it an artifact of the tagged release
+        # like any other. Tracked in #181.
+        #
+        # `update-agent.sh` ships with it because the entry script hands
+        # over to it (`setup-agent.sh:201`) and, on the fetched path, the
+        # sibling it execs does not exist (#187). A consumer can only fetch
+        # what the release publishes.
+        #
+        # The copy comes from the checkout, which is at the tag, so what
+        # gets signed is the tagged content rather than a branch head.
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          cp setup-agent.sh update-agent.sh dist/
 
       - name: Create the signing virtualenv
         # A fresh venv with `--require-hashes` so the pinned cryptography is
@@ -224,7 +264,7 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/signvenv"
           "$RUNNER_TEMP/signvenv/bin/python" -m pip install --quiet --require-hashes -r .github/scripts/sign-requirements.txt
 
-      - name: Sign the binaries
+      - name: Sign the release artifacts
         env:
           GLYNDOR_RELEASE_ED25519_KEY: ${{ secrets.GLYNDOR_RELEASE_ED25519_KEY }}
         working-directory: dist
@@ -233,9 +273,15 @@ jobs:
           # The key is read from the environment, never argv, so it does not
           # appear in the runner's process table. sign.py exits non-zero when
           # the secret is absent, so an unsigned artifact is never published.
-          for arch in x86_64 arm64; do
-            "$RUNNER_TEMP/signvenv/bin/python" "$GITHUB_WORKSPACE/.github/scripts/sign.py" \
-              "helmly-agent-linux-${arch}"
+          #
+          # The installer scripts are signed here too. Naming every file in
+          # one list rather than looping over architectures is deliberate:
+          # the set of published artifacts is no longer "one per arch", and
+          # a shape that only knows about arches is how a new asset ships
+          # unsigned without anyone noticing.
+          read -ra artifacts <<<"$RELEASE_ARTIFACTS"
+          for f in "${artifacts[@]}"; do
+            "$RUNNER_TEMP/signvenv/bin/python" "$GITHUB_WORKSPACE/.github/scripts/sign.py" "$f"
           done
 
       - name: Verify signatures against the pinned install key
@@ -284,9 +330,21 @@ jobs:
           # verify-release.py imports `cryptography`, and the whole point of
           # the venv is that the release never depends on whatever version
           # the runner image happens to carry.
-          for arch in x86_64 arm64; do
+          #
+          # The installer scripts are verified here as well. What this
+          # proves is narrower than it looks, and the distinction matters:
+          # `setup-agent.sh` is checked against the key `setup-agent.sh`
+          # itself pins, so it establishes that the release is internally
+          # consistent, NOT that the script is authentic to whoever
+          # downloads it. A consumer's trust anchor has to be its own
+          # pinned copy of the key, one hop up. This gate catches a release
+          # signed with a key the shipped installer would reject; it cannot
+          # catch a shipped installer that pins an attacker's key, and
+          # nothing self-referential ever could.
+          read -ra artifacts <<<"$RELEASE_ARTIFACTS"
+          for f in "${artifacts[@]}"; do
             "$RUNNER_TEMP/signvenv/bin/python" .github/scripts/verify-release.py \
-              "dist/helmly-agent-linux-${arch}" "$pin_setup"
+              "dist/${f}" "$pin_setup"
           done
 
       - name: Generate and sign SHA256SUMS
@@ -300,7 +358,8 @@ jobs:
         working-directory: dist
         run: |
           set -euo pipefail
-          sha256sum helmly-agent-linux-x86_64 helmly-agent-linux-arm64 > SHA256SUMS
+          read -ra artifacts <<<"$RELEASE_ARTIFACTS"
+          sha256sum "${artifacts[@]}" > SHA256SUMS
           cat SHA256SUMS
           "$RUNNER_TEMP/signvenv/bin/python" "$GITHUB_WORKSPACE/.github/scripts/sign.py" SHA256SUMS
 
@@ -311,18 +370,39 @@ jobs:
         working-directory: dist
         run: |
           set -euo pipefail
+          read -ra artifacts <<<"$RELEASE_ARTIFACTS"
+
+          # Guard first, because an empty RELEASE_ARTIFACTS makes every loop
+          # below iterate over nothing and report success. That is the exact
+          # shape this step exists to catch, so it must not be reachable
+          # through the step's own scaffolding.
+          if [ "${#artifacts[@]}" -lt 2 ]; then
+            echo "::error::RELEASE_ARTIFACTS lists ${#artifacts[@]} artifact(s); a release publishes at least the two binaries, so the variable is empty or malformed"
+            exit 1
+          fi
+
+          published=()
+          for f in "${artifacts[@]}"; do
+            published+=("$f" "${f}.sig")
+          done
+          published+=(SHA256SUMS SHA256SUMS.sig)
+
+          expected=$(( ${#artifacts[@]} * 2 + 2 ))
+          if [ "${#published[@]}" -ne "$expected" ]; then
+            echo "::error::derived ${#published[@]} files from ${#artifacts[@]} artifacts, expected ${expected}"
+            exit 1
+          fi
+
           missing=0
-          for f in \
-            helmly-agent-linux-x86_64 helmly-agent-linux-x86_64.sig \
-            helmly-agent-linux-arm64 helmly-agent-linux-arm64.sig \
-            SHA256SUMS SHA256SUMS.sig
-          do
+          for f in "${published[@]}"; do
             if [ ! -s "$f" ]; then
               echo "::error::release asset ${f} is missing or empty"
               missing=1
             fi
           done
           [ "$missing" -eq 0 ]
+
+          printf 'asserted %s files exist\n' "${#published[@]}"
 
       - name: Create GitHub Release
         env:
@@ -331,11 +411,11 @@ jobs:
           TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         working-directory: dist
         run: |
-          gh release create "$TAG" \
-            --generate-notes \
-            helmly-agent-linux-x86_64 \
-            helmly-agent-linux-x86_64.sig \
-            helmly-agent-linux-arm64 \
-            helmly-agent-linux-arm64.sig \
-            SHA256SUMS \
-            SHA256SUMS.sig
+          set -euo pipefail
+          read -ra artifacts <<<"$RELEASE_ARTIFACTS"
+          upload=()
+          for f in "${artifacts[@]}"; do
+            upload+=("$f" "${f}.sig")
+          done
+          upload+=(SHA256SUMS SHA256SUMS.sig)
+          gh release create "$TAG" --generate-notes "${upload[@]}"
