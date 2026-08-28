@@ -9,6 +9,7 @@ mod metrics;
 mod nftables;
 mod nginx;
 mod podman;
+mod server;
 mod state;
 mod sync;
 pub mod update;
@@ -23,6 +24,7 @@ use axum::{
     Json, Router,
 };
 use clap::{Parser, Subcommand};
+use server::{build_tls_acceptor, serve_tls};
 use state::AppState;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -30,130 +32,6 @@ use std::sync::{
 };
 use tokio::time::{interval, Duration};
 use tracing::info;
-
-/// Build the mTLS acceptor for the dashboard-facing listener.
-///
-/// Returns:
-/// - `Ok(Some(_))` — certs were configured and the acceptor built cleanly.
-/// - `Ok(None)` — certs were deliberately opted out via `INSECURE_PLAIN_HTTP=1`
-///   (development on a loopback address only; a loud warning is logged on use).
-/// - `Err(_)` — TLS is required by the deployment but could not be set up: missing
-///   certs/CA/key, malformed DER, or rustls build failure. **Fail closed.** The
-///   caller exits the process on `Err`; the listener never opens a plaintext
-///   socket by accident.
-///
-/// `build_tls_acceptor` is `pub(crate)` so tests can mutate `allow_plain_http`
-/// without env-var races.
-pub(crate) fn build_tls_acceptor(
-    config: &config::Config,
-    allow_plain_http: bool,
-) -> anyhow::Result<Option<tokio_rustls::TlsAcceptor>> {
-    use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
-    use std::sync::Arc as StdArc;
-
-    let cert_der = config.tls_cert_der.as_ref();
-    let key_der = config.tls_key_der.as_ref();
-    let ca_cert_der = config.tls_ca_cert_der.as_ref();
-
-    // All three are required for mTLS. If any is absent, the listener cannot
-    // do its job; refuse unless the operator opted out explicitly.
-    let (cert_der, key_der, ca_cert_der) = match (cert_der, key_der, ca_cert_der) {
-        (Some(c), Some(k), Some(ca)) => (c, k, ca),
-        (None, None, None) if allow_plain_http => {
-            tracing::warn!(
-                "INSECURE_PLAIN_HTTP=1: serving plain HTTP. This is for local development \
-                 only — a managed server with this set is unauthenticated on the wire."
-            );
-            return Ok(None);
-        }
-        (None, None, None) => {
-            anyhow::bail!(
-                "TLS required but not configured: TLS_CERT_DER_FILE, TLS_KEY_DER_FILE, \
-                 and TLS_CA_CERT_DER_FILE are all unset. Set INSECURE_PLAIN_HTTP=1 to \
-                 allow plaintext for local development."
-            );
-        }
-        _ => {
-            anyhow::bail!(
-                "TLS partially configured: TLS_CERT_DER_FILE, TLS_KEY_DER_FILE, and \
-                 TLS_CA_CERT_DER_FILE must all be set together. Got \
-                 cert={} key={} ca={}.",
-                cert_der.is_some(),
-                key_der.is_some(),
-                ca_cert_der.is_some(),
-            );
-        }
-    };
-
-    // Clone into owned data so the resulting ServerConfig is 'static.
-    let cert_chain = vec![CertificateDer::from(cert_der.clone())];
-    let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_der.to_vec()));
-
-    // Build client cert verifier trusting only the dashboard CA.
-    let mut root_store = rustls::RootCertStore::empty();
-    root_store
-        .add(CertificateDer::from(ca_cert_der.clone()))
-        .map_err(|e| anyhow::anyhow!("TLS CA cert add failed: {e}"))?;
-
-    let client_verifier = rustls::server::WebPkiClientVerifier::builder(StdArc::new(root_store))
-        .build()
-        .map_err(|e| anyhow::anyhow!("TLS client verifier build failed: {e}"))?;
-
-    let server_config = rustls::ServerConfig::builder()
-        .with_client_cert_verifier(client_verifier)
-        .with_single_cert(cert_chain, key)
-        .map_err(|e| anyhow::anyhow!("TLS ServerConfig build failed: {e}"))?;
-
-    Ok(Some(tokio_rustls::TlsAcceptor::from(StdArc::new(
-        server_config,
-    ))))
-}
-
-async fn serve_tls(
-    listener: tokio::net::TcpListener,
-    app: Router,
-    acceptor: tokio_rustls::TlsAcceptor,
-) -> anyhow::Result<()> {
-    use hyper::server::conn::http1;
-    use hyper_util::rt::TokioIo;
-
-    loop {
-        let (tcp_stream, _remote_addr) = listener.accept().await.context("accept TCP")?;
-        let acceptor = acceptor.clone();
-        let app = app.clone();
-
-        tokio::spawn(async move {
-            let tls_stream = match acceptor.accept(tcp_stream).await {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::debug!("TLS handshake failed: {e}");
-                    return;
-                }
-            };
-
-            let io = TokioIo::new(tls_stream);
-
-            // Bridge hyper::body::Incoming → axum::body::Body so the router can handle it.
-            let svc =
-                hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
-                    let app = app.clone();
-                    async move {
-                        use tower::ServiceExt;
-                        let req = req.map(axum::body::Body::new);
-                        app.oneshot(req).await
-                    }
-                });
-
-            if let Err(e) = http1::Builder::new()
-                .serve_connection(io, svc)
-                .with_upgrades()
-                .await
-            {
-                tracing::debug!("HTTP connection error: {e}");
-            }
-        });
-    }
-}
 
 /// Agent enters lockdown if no heartbeat received from dashboard within this window.
 const HEARTBEAT_TIMEOUT_SECS: u64 = 300;
@@ -562,90 +440,4 @@ fn agent_gen_rand(bytes: usize, encoding: &str) -> anyhow::Result<()> {
 fn agent_gen_uuid_v7() -> anyhow::Result<()> {
     println!("{}", uuid::Uuid::now_v7());
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::Config;
-    use uuid::Uuid;
-    use zeroize::Zeroizing;
-
-    fn empty_tls_config() -> Config {
-        Config {
-            database_url: String::new(),
-            agent_id: Uuid::now_v7(),
-            version: "test".into(),
-            dashboard_verify_keys: Zeroizing::new(Vec::new()),
-            internal_token: Zeroizing::new(String::new()),
-            listen_addr: "127.0.0.1:0".into(),
-            dashboard_url: None,
-            sync_token: None,
-            tls_cert_der: None,
-            tls_key_der: None,
-            tls_ca_cert_der: None,
-            dashboard_port: None,
-        }
-    }
-
-    fn partial_tls_config(cert: bool, key: bool, ca: bool) -> Config {
-        let mut c = empty_tls_config();
-        c.tls_cert_der = cert.then(|| vec![0xAA; 64]);
-        c.tls_key_der = key.then(|| Zeroizing::new(vec![0xBB; 32]));
-        c.tls_ca_cert_der = ca.then(|| vec![0xCC; 64]);
-        c
-    }
-
-    /// C1: missing certs without opt-in must fail closed.
-    /// This is the regression test — reverting `build_tls_acceptor` to
-    /// `return Ok(None)` (the old fall-back-to-plain-HTTP behaviour) makes this
-    /// test go red.
-    #[test]
-    fn tls_missing_certs_without_opt_in_returns_err() {
-        let r = build_tls_acceptor(&empty_tls_config(), false);
-        let err = match r {
-            Err(e) => e,
-            Ok(_) => panic!("TLS-required-but-not-configured must fail closed; got Ok(_)"),
-        };
-        let msg = format!("{err:#}");
-        assert!(
-            msg.contains("TLS required but not configured"),
-            "error message must name the cause; got: {msg}"
-        );
-    }
-
-    /// C1: missing certs WITH explicit dev opt-in must serve plain HTTP,
-    /// not panic and not silently fail-closed.
-    #[test]
-    fn tls_missing_certs_with_opt_in_returns_ok_none() {
-        match build_tls_acceptor(&empty_tls_config(), true) {
-            Ok(None) => {} // expected
-            Ok(Some(_)) => panic!("opt-in yields None (plain HTTP), not Some(acceptor)"),
-            Err(e) => panic!("INSECURE_PLAIN_HTTP=1 must permit plaintext; got Err({e})"),
-        }
-    }
-
-    /// C1: a *partial* set (e.g. cert + CA but no key) is a misconfiguration —
-    /// refusing to silently serve plaintext is the only safe move.
-    #[test]
-    fn tls_partial_config_returns_err() {
-        let r = build_tls_acceptor(&partial_tls_config(true, false, true), false);
-        let err = match r {
-            Err(e) => e,
-            Ok(_) => panic!("partial TLS config must fail closed; got Ok(_)"),
-        };
-        let msg = format!("{err:#}");
-        assert!(
-            msg.contains("partially configured"),
-            "error message must name the cause; got: {msg}"
-        );
-    }
-
-    /// C1: malformed DER bytes (cert set, but garbage) must fail closed too,
-    /// not silently fall back to plaintext.
-    #[test]
-    fn tls_malformed_der_returns_err() {
-        let r = build_tls_acceptor(&partial_tls_config(true, true, true), false);
-        assert!(r.is_err(), "malformed DER must fail closed");
-    }
 }

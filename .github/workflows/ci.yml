@@ -18,13 +18,29 @@ jobs:
     # format is `@<sha> # vX.Y.Z`.
     uses: Glyndor/.github/.github/workflows/rust-ci.yml@d5041b038b7d4935e75400dff612962e6fa14893 # v1.21.0
     with:
-      # Coverage ratchet (measured 2026-08-17 on develop: 66.04%
-      # lines / 72.64% functions / 67.77% regions after adding
-      # handlers/metrics.rs (0% → 89.42%) and nftables/divergence.rs
-      # (0% → 88.24%) tests). Threshold 63 leaves ~3pp of margin
-      # under the measured value. The threshold raises in the
-      # same PR that raises the coverage — never silently.
-      coverage-threshold: 63
+      # Coverage ratchet. The number went DOWN in this pull request and
+      # the measurement got stricter, which is worth reading carefully
+      # before anyone raises it back.
+      #
+      # Until now the `#[cfg(test)] mod tests` blocks lived inside the
+      # files they test, and cargo-llvm-cov counted those test bodies as
+      # covered lines of the production file. The tests were measuring
+      # themselves. Moving them into sibling `tests.rs` files puts them
+      # under llvm-cov's default filename exclusion, so they leave both
+      # the numerator and the denominator.
+      #
+      # Measured with the reusable's own command, same commit, only the
+      # move between them:
+      #
+      #   before   8673 lines, 5878 covered, 67.77%
+      #   after    4941 lines, 2355 covered, 47.66%
+      #
+      # 47.66% is what production coverage has been all along; 67.77%
+      # was roughly 20 points of test code vouching for itself. So 45
+      # here is not a relaxed gate, it is the first honest one, with
+      # ~2.7pp of margin. Raise it in the same pull request that raises
+      # the coverage, never silently.
+      coverage-threshold: 45
 
   pin-policy:
     uses: Glyndor/.github/.github/workflows/pin-policy-reusable.yml@d4bbc5b6ec0c351ca4cb17d948ceaad818da4078 # v1.18.1
