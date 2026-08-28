@@ -9,10 +9,40 @@ all-features = true
 
 [advisories]
 version = 2
-# No ignores today. RUSTSEC-2023-0071 (rsa) is no longer reachable —
-# the event-listener bump in #124 removed the last sqlx-mysql path.
-# If rsa returns via a future sqlx feature, document the reachability
-# argument here (mirror of audit.toml).
+# No ignores today, and that is NOT because RUSTSEC-2023-0071 went away.
+# It is still live and `rsa` 0.9.10 is still in Cargo.lock, alongside
+# sqlx-mysql, its only reverse-dependency. Measured on this commit:
+#
+#   $ cargo audit --deny warnings          # no --ignore
+#   error: 1 vulnerability found!          # RUSTSEC-2023-0071
+#   $ cargo deny check advisories
+#   advisories ok
+#
+# The two tools disagree because they measure different things, and both
+# are right about their own question. cargo-deny resolves the dependency
+# GRAPH (`[graph] all-features = true` above), and rsa is not in it:
+#
+#   $ cargo tree --target all -i rsa           # nothing to print
+#   $ cargo tree --target all -i sqlx-mysql    # nothing to print
+#
+# cargo-audit reads Cargo.lock as text, where both are present, so it
+# reports the advisory and audit.yml carries `--ignore RUSTSEC-2023-0071`
+# with the reachability argument written out in audit.toml.
+#
+# So this file needs no ignore and audit.yml does. That is not an
+# inconsistency to tidy away by adding one here or dropping one there.
+#
+# What this comment used to say was that the advisory was "no longer
+# reachable" because "the event-listener bump in #124 removed the last
+# sqlx-mysql path". event-listener has nothing to do with rsa, #124 did
+# not touch that path, and reading this file alone would have led someone
+# to delete a suppression that is still load-bearing.
+#
+# The condition that retires the ignore in audit.yml is sqlx-mysql leaving
+# Cargo.lock, which happens when sqlx drops it from its default resolution
+# or the mysql feature is excluded at the resolver level. Check with the
+# two `cargo tree` lines above plus a plain `grep sqlx-mysql Cargo.lock`;
+# the grep is the one that matters, because it is what cargo-audit reads.
 
 [licenses]
 version = 2
@@ -25,7 +55,6 @@ allow = [
 	"Apache-2.0 WITH LLVM-exception",
 	"MIT",
 	"MIT-0",
-	"0BSD",
 	"BSD-1-Clause",
 	"BSD-3-Clause",
 	"BSL-1.0",
@@ -43,22 +72,31 @@ allow = [
 # dependencies. None of them reach the Linux production binary;
 # investigate each warning before denying.
 multiple-versions = "warn"
-# Wildcard version requirements: warn (not deny). The agent's single
-# git dep (`podup`, pinned to a tag, #94 tracks the bump to crates.io)
-# is tagged-pinned but cargo-deny flags git deps as wildcard. The
-# dep is explicit — the tag is the version. Re-enable `wildcards =
-# "deny"` once `podup` is on crates.io. Until then, the gate
-# already catches every other wildcard requirement.
+# Wildcard version requirements. This was "warn" for one reason: the
+# agent's single git dependency, `podup`, which cargo-deny flags as a
+# wildcard because git deps have no version requirement. #160 removed
+# that dependency, since no code referenced it, so the exemption has
+# nothing left to exempt.
+#
+# Left at "warn" rather than flipped to "deny" in the same change that
+# removed its reason, because promoting a gate and removing its only
+# known subject at once means a green run proves neither. Flip it in its
+# own change and read the run.
 wildcards = "warn"
 allow-wildcard-paths = true
 highlight = "all"
 
 [sources]
-# Crates from crates.io, plus one org-internal git source: `podup`
-# is the compose-translator library the agent depends on (#94
-# tracks the version bump; owner territory). Until podup publishes
-# to crates.io, the git source stays.
+# Crates from crates.io. There was one org-internal git source,
+# `podup`, until #160 removed it as an unused dependency; the agent
+# reaches podman through `podman compose` at runtime, not through a
+# linked crate. No git source remains.
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = ["https://github.com/Glyndor/podup"]
+# Empty on purpose. It listed Glyndor/podup, and #160 removed that
+# dependency. Leaving the entry would mean a future git dependency on
+# that URL is admitted without anyone deciding to admit it, which is a
+# standing permission for something absent rather than a record of
+# something present.
+allow-git = []
