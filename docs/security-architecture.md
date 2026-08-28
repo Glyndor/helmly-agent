@@ -702,6 +702,78 @@ the issue reference where one exists.
   validation on the inner `command` JSON object beyond
   `serde_json::Value`.
 
+### 5.x The repository itself is a trust boundary this document did not model
+
+Every gap above is about the running agent. This one is about how the agent
+gets built, and it was missing from a document whose whole subject is what an
+attacker can reach.
+
+A required status check matches **by name**. So a contributor with write
+access can, in one pull request, replace a thin caller with a stub job whose
+display name matches the required check and whose body is `exit 0`, and the
+real gate never runs. The reusable cannot close this: the caller lives in the
+repository the pull request edits, and GitHub runs the pull request's version
+of it.
+
+It reaches further here than in a repository of metadata. `release.yml` holds
+the org's Ed25519 signing key in the environment of its publish job, and this
+product is a root daemon that provisions mTLS material and executes commands
+sent to it. A neutralised gate on this repository is a signed artifact nobody
+checked.
+
+The org accepts this while it is effectively single-maintainer, the owner plus
+Dependabot, and `standards/ci` says so explicitly. It is not zero risk: the
+2026-07 incident, where an unrecognised org member briefly held write on every
+repository, is the scenario where it bites.
+
+**The mitigation is ruleset-side and applies the moment a human collaborator
+is added:** require review from Code Owners on `.github/workflows/**`, so a
+pull request that neutralises a caller cannot merge without the owner seeing
+the diff. `.github/CODEOWNERS` now exists, which is the precondition for that
+rule rather than the rule itself, and it is not yet in place: GitHub reads
+`CODEOWNERS` only from the **default branch**, and the file exists on `develop`
+and not on `main`. It is written, not active, and it becomes active only when a
+`develop` to `main` promotion carries it across. `protect-main` additionally has
+`require_code_owner_review: false` and `required_approving_review_count: 0`, so
+the rule would still have to be turned on afterwards. Two independent
+conditions, and the first is the one nothing announces. Until a collaborator
+exists, the control is that the owner reviews and merges every pull request.
+
+### 5.y The installer that pins the release key arrives unauthenticated
+
+4.8 documents verify-before-execute for the agent binary, and that control is
+real. This gap is the hop underneath it, which no section of this document
+described until now.
+
+`setup-agent.sh` is the root of trust for an install. `_verify_release_sig`
+(`setup-agent.sh:717`) checks the downloaded binary's Ed25519 signature against
+a key pinned in the script itself, in `PUB_KEYS_B64` (`setup-agent.sh:730-735`).
+Everything downstream — the binary signature, `SHA256SUMS`, the release pin
+check — rests on that constant being the real key.
+
+The file carrying it is fetched without authentication. `Glyndor/helmly`'s
+`install.sh:106-115` runs `curl` against
+`https://raw.githubusercontent.com/Glyndor/helmly-agent/main/setup-agent.sh`,
+then `chmod 700`, then `exec bash`, as root on a fresh host. There is no
+signature, no checksum, and no version: the URL names a **branch**, so what runs
+is whatever is on `main` at that moment. The `v2.0.0` release publishes six
+signed assets and `setup-agent.sh` is not among them.
+
+**What an attacker gains.** Whoever controls that fetch controls `PUB_KEYS_B64`,
+and therefore decides which binary verifies. Every signature check in 4.8 then
+passes against a key of the attacker's choosing. Reaching it requires write
+access to this repository's default branch — which is 5.x, and the two gaps
+compound — or TLS interception between the operator and
+`raw.githubusercontent.com`, which is the scenario signing exists to answer and
+is not otherwise addressed anywhere in the install path.
+
+It is not remotely exploitable by an internet attacker as things stand. The
+finding is that the product ships a signature chain whose root is
+unauthenticated, so the chain proves less than its documentation implies. Nor
+can the agent close this itself: `install.sh` lives in `Glyndor/helmly`, so the
+fix is cross-repo. Tracked in #181, with the destination being the installer
+shipped inside the signed `.deb` rather than curled.
+
 ## 6. Out of scope
 
 This document deliberately does not model:
