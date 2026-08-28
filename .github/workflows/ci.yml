@@ -58,27 +58,18 @@ jobs:
     with:
       max-age-days: 15
 
-  # audit.yml is the only scheduled workflow here, weekly on Monday, and
-  # until now nothing noticed if it stopped firing. A cron that silently
-  # stops looks exactly like a cron with nothing to report: the last run is
-  # green either way, and the absence of a newer one is the only signal.
-  # 15 days is about two periods, so one missed Monday is tolerated and two
-  # are not.
-  schedule-freshness:
-    # `actions: read` is required and is not optional politeness: a called
-    # workflow cannot elevate beyond the permissions of its caller, and
-    # reading run history needs that scope. Granted per job rather than
-    # raised at the top of the file, so no other job gains it. Without it
-    # the whole workflow fails to load, which is how this was found: the
-    # run reported `startup_failure` with every check missing rather than
-    # one job failing, and actionlint is clean either way.
-    permissions:
-      contents: read
-      actions: read
-    uses: ./.github/workflows/reusable-schedule-freshness.yml
-    with:
-      workflow: audit.yml
-      max-age-days: 15
+  # The `schedule-freshness` caller lived here and is held until the
+  # release. It failed on its first run and it was right to: audit.yml has
+  # never fired on schedule, because GitHub reads `schedule:` triggers only
+  # from the default branch and audit.yml is not on `main`. The guard
+  # reported a real dead cron on contact, and its own header says a
+  # workflow with no successful scheduled run on record is a failure "which
+  # for an established workflow is exactly right".
+  #
+  # So the fix is the develop -> main release, not a change here, and a
+  # check that cannot pass until then must not sit red in the meantime.
+  # Tracked in #162; the reusable stays in the tree, only the caller comes
+  # out, and it goes back once one scheduled run exists.
 
   # The two installer scripts are the only shell in the repository, and until
   # now nothing linted them. Both are clean at shellcheck's strictest level
