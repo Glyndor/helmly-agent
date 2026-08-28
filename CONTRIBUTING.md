@@ -82,10 +82,14 @@ intent, not to drive state.
 
 ## Tests
 
-There is no `tests/` directory of any kind in this repository. The
-README suggests `cargo build --release` and `cargo test`, and that is the
-whole local surface. What is run for real is what CI runs, and CI is the
-only place the rest are exercised. Run them before pushing:
+The local surface is `cargo` plus `tests/`. `tests/run.sh` is the shell
+suite: it iterates `tests/*.test.sh`, and it fails when it finds none,
+so a runner that matches nothing cannot report success. CI calls it
+through `reusable-shell-ci.yml`'s `test-command`, naming the runner and
+not one file, so a new `tests/*.test.sh` is picked up by existing rather
+than by remembering to edit a workflow input. `README.md:29-30` covers
+only `cargo build --release` and `cargo test`. Everything beyond that is
+what CI runs. Run all of it before pushing:
 
 ```sh
 cargo fmt --all --check
@@ -93,6 +97,7 @@ cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --all-features --workspace
 cargo llvm-cov --locked --workspace --all-features \
   --summary-only --json --output-path coverage.json
+./tests/run.sh
 shellcheck -S style setup-agent.sh update-agent.sh tests/*.sh
 cargo audit --deny warnings --ignore RUSTSEC-2023-0071
 cargo deny check

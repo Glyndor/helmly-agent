@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # Runs every shell test. CI calls this rather than naming one file, so a
-# new tests/*.test.sh is picked up by existing it, not by remembering to
-# add it to a workflow input. #167 wired shell-ci at one named file and
+# new tests/*.test.sh is picked up by existing, not by remembering to add
+# it to a workflow input. #167 wired shell-ci at one named file and
 # the next test added was already invisible to CI before this existed.
 
 set -euo pipefail
