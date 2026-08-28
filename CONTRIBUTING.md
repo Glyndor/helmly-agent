@@ -93,10 +93,24 @@ cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --all-features --workspace
 cargo llvm-cov --locked --workspace --all-features \
   --summary-only --json --output-path coverage.json
-shellcheck setup-agent.sh update-agent.sh
+shellcheck -S style setup-agent.sh update-agent.sh tests/*.sh
 cargo audit --deny warnings --ignore RUSTSEC-2023-0071
 cargo deny check
 ```
+Use **shellcheck v0.11.0**, the version CI pins. This is not pedantry: the
+same file is clean under one version and not another. `#170` passed
+shellcheck 0.10.0 locally and failed CI, because 0.10.0 reports SC2317
+"unreachable" on a stub the sourced code calls and 0.11.0 reports SC2329
+"never invoked" on it. So **"shellcheck clean" without naming a version is
+not a claim about anything**, and the person most likely to act on it is
+the one running a different build.
+
+CI does not merely pin the number. `reusable-shell-ci.yml` pins the
+version and the sha256 of that release's tarball together, and its own
+input description says they travel as a pair, so overriding one without
+the other fails the install. A version pin on its own still trusts
+whatever that URL serves today.
+
 
 Two rules matter more than coverage:
 
