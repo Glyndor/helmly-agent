@@ -13,7 +13,7 @@
 - [ ] `cargo fmt --all --check` is clean
 - [ ] `cargo clippy --locked --all-targets --all-features -- -D warnings` is clean
 - [ ] `cargo test --locked --all-features --workspace` passes
-- [ ] `cargo llvm-cov --locked --workspace --all-features --summary-only --json --output-path coverage.json` meets the ratchet (`45` today)
+- [ ] `cargo llvm-cov --locked --workspace --all-features --summary-only --json --output-path coverage.json` meets the ratchet in `ci.yml` (`coverage-threshold`)
 - [ ] `shellcheck setup-agent.sh update-agent.sh` is clean
 - [ ] `cargo audit --deny warnings --ignore RUSTSEC-2023-0071` and `cargo deny check` pass, for changes to `Cargo.toml`, `Cargo.lock`, `audit.toml` or `deny.toml`
 

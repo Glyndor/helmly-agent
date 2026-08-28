@@ -116,7 +116,8 @@ you did not mean.
 
 Coverage is ratcheted, not declared. The reusable runs
 `cargo llvm-cov --summary-only --json` and gates on the percent it
-returns. The current threshold is `45` (see `ci.yml:41`), set honestly
+returns. The threshold lives in `ci.yml` under `coverage-threshold`,
+and at the time of writing it is `45`, set honestly
 after moving `#[cfg(test)] mod tests` blocks into sibling `tests.rs`
 files that cargo-llvm-cov does not count, which dropped measured
 coverage from `67.77%` to `47.66%` (the same diff, same commit). Raise
