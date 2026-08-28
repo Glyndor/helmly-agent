@@ -243,16 +243,38 @@ jobs:
           set -euo pipefail
           # Gate: the release must verify against the exact public key the
           # installer and self-update pin, or a fresh install would reject it
-          # (the failure that shipped a broken v1.4.0). Fail the build here,
-          # before anything is uploaded or published.
-          # Each verifier pins the key in its own syntax, so match per file.
-          pin_setup=$(grep -oE 'RELEASE_VERIFY_KEY_B64="[^"]*"' setup-agent.sh | head -1 | sed -E 's/.*="([^"]*)"/\1/')
-          pin_update=$(grep -oE 'pub_b64 = "[^"]*"' update-agent.sh | head -1 | sed -E 's/.*"([^"]*)"/\1/')
+          # (the failure that shipped a broken v1.4.0). Fail here, before
+          # anything is uploaded or published.
+          #
+          # All three files still pin the key. What changed is the shape:
+          # #109 moved the two shell scripts to the two-slot PUB_KEYS_B64
+          # list, and this step kept grepping the pre-#109 spellings,
+          #
+          #   setup-agent.sh    RELEASE_VERIFY_KEY_B64="..."   gone
+          #   update-agent.sh   pub_b64 = "..."                gone
+          #
+          # so `pin_setup` and `pin_update` both came back empty and the
+          # step exited 1 on "no RELEASE_VERIFY_KEY_B64 pin found in
+          # setup-agent.sh". No release could be published, and each of the
+          # three files carries a comment saying this check keeps them in
+          # sync. A gate that cannot pass is not stricter than no gate, it
+          # is a gate nobody can satisfy.
+          #
+          # Both scripts embed the same Python literal, so one extractor
+          # reads slot 0 from either. Every pin must be found: an empty
+          # match is a pattern that rotted, not a key that is absent.
+          slot0() {
+            awk '/^PUB_KEYS_B64 = \[/{f=1;next} f && /^ *"[A-Za-z0-9+\/=]+",/{gsub(/[ ",]/,"");print;exit}' "$1"
+          }
+          pin_setup=$(slot0 setup-agent.sh)
+          pin_update=$(slot0 update-agent.sh)
           pin_rust=$(grep -oE 'RELEASE_VERIFY_KEY_B64: &str = "[^"]*"' internal/update/mod.rs | head -1 | sed -E 's/.*"([^"]*)".*/\1/')
-          if [ -z "$pin_setup" ]; then
-            echo "::error::no RELEASE_VERIFY_KEY_B64 pin found in setup-agent.sh"
-            exit 1
-          fi
+          for name in pin_setup pin_update pin_rust; do
+            if [ -z "${!name}" ]; then
+              echo "::error::${name} is empty; this check no longer matches the file it greps. Fix the pattern, do not delete the check."
+              exit 1
+            fi
+          done
           if [ "$pin_setup" != "$pin_update" ] || [ "$pin_setup" != "$pin_rust" ]; then
             echo "::error::pinned release keys disagree (setup=$pin_setup update=$pin_update rust=$pin_rust)"
             exit 1

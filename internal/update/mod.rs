@@ -230,7 +230,7 @@ async fn download_bytes(client: &reqwest::Client, url: &str) -> Result<Vec<u8>> 
 pub(crate) const RELEASE_PUBKEYS: &[[u8; 32]; 2] = &[
     // Slot 0: GLYNDOR_RELEASE_ED25519_KEY = HFv7vg5FCY7YyKUDbJhaQSfB9SboJGSblJtFbLmLHzM=
     // (kept in sync with `RELEASE_VERIFY_KEY_B64` below via the release.yml
-    // pin check at `.github/workflows/release.yml:107-111`.)
+    // pin check at the "Verify signatures against the pinned install key" step in `.github/workflows/release.yml`.)
     [
         0x1c, 0x5b, 0xfb, 0xbe, 0x0e, 0x45, 0x09, 0x8e, 0xd8, 0xc8, 0xa5, 0x03, 0x6c, 0x98, 0x5a,
         0x41, 0x27, 0xc1, 0xf5, 0x26, 0xe8, 0x24, 0x64, 0x9b, 0x94, 0x9b, 0x45, 0x6c, 0xb9, 0x8b,
@@ -240,8 +240,7 @@ pub(crate) const RELEASE_PUBKEYS: &[[u8; 32]; 2] = &[
     [0u8; 32],
 ];
 
-/// Reference for the release.yml pin-check (`.github/workflows/
-/// release.yml:107-111` greps the b64 literal in setup-agent.sh,
+/// Reference for the release.yml pin-check (the "Verify signatures against the pinned install key" step in `.github/workflows/release.yml` greps the b64 literal in setup-agent.sh,
 /// update-agent.sh, and this file to assert the three agree). The
 /// actual verification path uses `RELEASE_PUBKEYS` above.
 #[allow(dead_code)]
