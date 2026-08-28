@@ -662,7 +662,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 # `RELEASE_PUBKEYS` two-slot pattern (`standards/releases/index.md:52-58`).
 # Slot 0 is the active signing key; slot 1 carries the next key during a
 # two-phase rotation, or is empty when no rotation is in flight.
-# The release.yml pin check at `.github/workflows/release.yml:107-111`
+# The release.yml pin check at the "Verify signatures against the pinned install key" step in `.github/workflows/release.yml`
 # greps these literals to assert the Rust const, the install-script
 # constant, and the update-script constant all agree.
 PUB_KEYS_B64 = [
