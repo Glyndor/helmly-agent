@@ -150,12 +150,15 @@ permission floors are at Write (`internal/handlers/containers.rs:17-19,
 role may list containers for the tenants it can already see)
 (`internal/handlers/containers.rs:9-13`).
 
-What happens on failure: the compose YAML walker rejects
-host-escape vectors before the file lands on disk
-(`internal/handlers/containers.rs:45-51`); the volume source is
-restricted to the tenant project dir, the webroot, `/tmp`, or a
-relative path (`internal/handlers/validate.rs:175-237`); identifiers
-are validated to alphanumeric, hyphen, and underscore only, length
+What happens on failure: `handle_container_deploy`
+(`internal/handlers/containers.rs`) passes the compose YAML to
+`validate_compose` (`internal/handlers/validate/compose/mod.rs`)
+before the file lands on disk, and a refusal ends the command with a
+generic `container.deploy compose rejected` while the reason is logged
+on the agent; bind sources are confined to the tenant project dir, the
+nginx webroot, or `/tmp` by `check_bind_source`
+(`internal/handlers/validate/compose/paths.rs`); identifiers are
+validated to alphanumeric, hyphen, and underscore only, length
 ≤128 (`internal/handlers/containers.rs:184-206`).
 
 ### 3.5 Agent to the public internet (hosted-site nginx, certbot/ACME, GitHub release downloads)
@@ -173,8 +176,9 @@ also reaches `github.com` and `objects.githubusercontent.com`
 
 What authenticates: the same signed-command path as 3.1. The nginx
 config is additionally passed through an allow-list walker
-(`internal/handlers/validate.rs:331-416`) and a hard-deny list
-(`internal/handlers/validate.rs:305-324`); the cert path is bounded
+(`validate_nginx` in `internal/handlers/validate.rs`) and a hard-deny
+list (`DENY_NGINX_DIRECTIVES` and `DENY_NGINX_PROXY_PATTERNS` in the
+same file); the cert path is bounded
 to a directory under `/etc/glyndor/helmly/nginx/certs/<domain>/`
 where `<domain>` is itself validated against a strict character set
 (`internal/handlers/nginx_cmd.rs:257-272`).
@@ -480,26 +484,61 @@ listed.
   sets `HOME=/var/lib/glyndor/helmly/orgs/<id>` and
   `XDG_RUNTIME_DIR=/run/user/<uid>` so rootless Podman finds its
   storage and socket (`internal/podman/mod.rs:71-73`).
-- **Compose YAML deny-list.** The walker rejects
-  `privileged`, `cap_add`, `cgroup_parent`, `devices`, `sysctls`,
-  `tmpfs`, `init: false` (presence or `init: false` is rejected;
-  `init: true` and absent are allowed)
-  (`internal/handlers/validate.rs:24-56, 102-114`).
-- **Conditional-deny values.** `network_mode: host` and
-  `network_mode: container:*`, `pid: host`, `ipc: host`,
-  `userns_mode` other than `auto` are rejected
-  (`internal/handlers/validate.rs:39-44, 116-138`).
-- **Security-opt deny.** `seccomp=unconfined`, `apparmor=unconfined`,
-  `systempaths=unconfined` are rejected
-  (`internal/handlers/validate.rs:46-50, 155-167`).
-- **`cap_drop: ["ALL"]` is rejected.** A rootless container that
-  drops all caps defeats the security model; the walker refuses it
-  (`internal/handlers/validate.rs:140-153`).
-- **Volume source allow-list.** A volume's `source` must be under
-  the tenant project dir, under the org webroot, equal to `/tmp`,
-  or relative (`internal/handlers/validate.rs:175-237`). Both the
-  long form `{source: …, target: …}` and the short form
-  `/host:/in:ro` are checked.
+- **Compose validation runs before the file is written.**
+  `validate_compose` (`internal/handlers/validate/compose/mod.rs`) takes
+  the YAML and a `ComposePolicy`: the project directory the file is
+  written to and run from (`podman::project_dir`), and the host ports the
+  agent itself uses (`reserved_host_ports` in
+  `internal/handlers/containers.rs`: the listener port, the WireGuard
+  port, the setup port and, where set, the dashboard port). It makes
+  three passes over the parsed document, one file per family under
+  `internal/handlers/validate/compose/`: `structure.rs`, then
+  `document.rs`, then the key rules of `keys.rs`. Every refusal names the
+  key and the reason, and a value in a shape a rule cannot read is
+  refused rather than skipped.
+- **YAML constructs that make a runner read something else are
+  refused anywhere** (`structure::check`). YAML tags, keys that are not
+  strings, merge keys (`<<`) and any unescaped `$` are rejected, so the
+  other rules see plain strings, lists and maps and the runner substitutes
+  nothing after validation; `$$` is accepted as a literal `$`.
+- **Top-level rules** (`document::check`). A top-level `name` and any
+  `x-podman*` extension are rejected. `services` must be a mapping of
+  mappings. A named volume whose `driver_opts` bind a host path (`o`
+  containing `bind` or `rbind`, or a `device` other than `tmpfs`) is
+  rejected, as is a network whose `name` or `driver` is `host`.
+- **Deny-listed keys at any depth** (`DENY_KEYS` in `keys.rs`):
+  `privileged`, `cap_add`, `cgroup_parent`, `devices`,
+  `device_cgroup_rules`, `sysctls`, `tmpfs`, `runtime`, `volumes_from`,
+  `extends`, `include`, `env_file`, `label_file`, `build`. An `x-` key is
+  accepted only at the top level, and a `file` or `environment` source
+  inside `secrets` or `configs` is rejected.
+- **Value rules** (`values.rs`). `init` must be `true` when present.
+  `network_mode`, `pid`, `ipc`, `uts` and `cgroup` may not name the host,
+  another container or service (`container:`, `service:`), or a
+  namespace by path (`ns:`), and `network_mode` may not carry
+  `slirp4netns:` or `pasta:` options. `userns_mode` may only be `auto`.
+  `cap_drop` may not contain `ALL`, in any case and with or without the
+  `CAP_` prefix, because a rootless container that drops every capability
+  is outside the security model. `security_opt` rejects any `seccomp`
+  or `unmask` entry, `apparmor` and `systempaths` set to `unconfined`,
+  and `label` set to `disable` or to a `type:`. The label
+  `io.containers.autoupdate` is rejected.
+- **Volume source allow-list** (`volumes.rs`, `paths.rs`). A service
+  volume is checked in its short form (`source:target[:options]`) and its
+  long form. A source that starts with `/`, `.` or `~` is a host path, and
+  so is a `bind` source and a `volume` source written as a path. A
+  host path is resolved against the project directory through every
+  symbolic link that exists, and must then lie under the project
+  directory, under the nginx webroot
+  (`/var/lib/glyndor/helmly/nginx/webroot`), or under `/tmp`; `..`, `~`
+  and an empty source are rejected. A long-form mount needs a `type`, and
+  only `bind` and `volume` are accepted.
+- **Host aliases and ports** (`hosts.rs`, `ports.rs`). `extra_hosts`
+  accepts only literal IP addresses, and rejects `host-gateway`, loopback,
+  unspecified and link-local addresses (including the address a
+  slirp4netns container uses for the host, `10.0.2.2`, and IPv4-mapped
+  forms). `ports` may not publish a host port, or a range that contains
+  one, that the agent itself uses, whatever the protocol or host address.
 - **Tenant project dir is chowned to the tenant user** so the
   tenant process can read its own compose file
   (`internal/podman/mod.rs:150-155`).
@@ -520,21 +559,22 @@ listed.
 
 - **Block-directive allow-list.** Only `events`, `http`, `server`,
   `location`, `upstream`, `map` may open a brace block
-  (`internal/handlers/validate.rs:247-253, 343-359`).
-- **Leaf-directive allow-list.** Inside those blocks, only the
-  documented set of ~40 reverse-proxy directives is allowed
-  (`internal/handlers/validate.rs:255-301, 368-391`).
+  (`ALLOWED_NGINX_DIRECTIVES`, checked by `validate_nginx` in
+  `internal/handlers/validate.rs`).
+- **Leaf-directive allow-list.** Inside those blocks, only the 40
+  reverse-proxy directives of `ALLOWED_NGINX_LEAF_DIRECTIVES` are
+  allowed, and `events` accepts only `worker_connections`
+  (`validate_nginx`).
 - **Hard-deny directives.** `dgram_access`, `perl_modules`,
-  `load_module`, `secure_link_secret`, `ssl_engine`, `aio`,
-  `thread_pool`, `js_import`, `js_content`, `client_body_temp_path`,
-  `fastcgi_param`, `uwsgi_param`, `scgi_param` are denied even if
-  nginx accepts them (`internal/handlers/validate.rs:305-320`).
+  `perl_require`, `load_module`, `secure_link_secret`, `ssl_engine`,
+  `aio`, `thread_pool`, `js_import`, `js_content`,
+  `client_body_temp_path`, `fastcgi_param`, `uwsgi_param`, `scgi_param`
+  (`DENY_NGINX_DIRECTIVES`) are denied even if nginx accepts them.
 - **proxy_pass unix-socket deny.** Any `proxy_pass` value that
   contains `unix:/var/run/docker.sock` or `unix:/var/run/podman/`
-  is rejected (`internal/handlers/validate.rs:324, 392-404`).
+  (`DENY_NGINX_PROXY_PATTERNS`) is rejected.
 - **Brace-balance check.** After the structural walk, an
-  unbalanced brace count is rejected
-  (`internal/handlers/validate.rs:410-414`).
+  unbalanced brace count is rejected (the end of `validate_nginx`).
 - **Allow-list + `nginx -t` defence-in-depth.** `nginx.update_config`
   writes the staged config to a temp file outside `/etc/nginx/`,
   runs `podman exec helmly-nginx nginx -t -c <tmp>`, and only swaps
@@ -558,8 +598,8 @@ listed.
 - **Certbot webroot.** `certbot certonly --webroot` runs against
   `/var/lib/glyndor/helmly/nginx/webroot`
   (`internal/handlers/nginx_cmd.rs:225-243`). The webroot itself
-  is also the allow-listed volume source
-  (`internal/handlers/validate.rs:230-232`).
+  is also an allowed volume source (`WEBROOT` in
+  `internal/handlers/validate/compose/paths.rs`).
 
 ### 4.11 Secret handling
 
@@ -865,16 +905,18 @@ of the following:
   `update-agent.sh`.
 - Isolation: `internal/nftables/mod.rs`,
   `internal/nftables/divergence.rs`, `internal/podman/mod.rs`,
-  `internal/handlers/validate.rs`, `internal/handlers/containers.rs`.
+  `internal/handlers/validate.rs`, `internal/handlers/validate/compose/`,
+  `internal/handlers/containers.rs`.
 
 Not after, not in a follow-up, not "later when there's time". A
 review agent that diffs the code against this document and finds a
 gap on a feature merged yesterday is the failure mode this rule
 exists to prevent.
 
-A refactor counts, even one that changes no behaviour. Every claim
-here carries a line number, and moving code invalidates them
-silently: a citation that now points at the wrong function still
+A refactor counts, even one that changes no behaviour. Most claims
+here carry a line number (the two validators are cited by file and by
+function or constant name, which a move does not silence), and moving
+code invalidates the line numbers silently: a citation that now points at the wrong function still
 reads as evidence. #152 moved `build_tls_acceptor` and `serve_tls`
 out of `internal/main.rs` and shifted everything after them, which
 left thirteen citations in this file pointing at unrelated code and
