@@ -17,7 +17,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 
 def main() -> None:
-	if len(sys.argv) < 2:
+	if len(sys.argv) < 2 or len(sys.argv) > 3:
 		print(__doc__, file=sys.stderr)
 		sys.exit(1)
 
