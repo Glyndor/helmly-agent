@@ -36,7 +36,9 @@ jobs:
       contents: read
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
-      sha: ${{ steps.commit.outputs.sha || github.sha }}
+      # Only a rehearsal falls back to the commit of the run. A run that publishes
+      # takes what `commit` emitted, and an empty value is refused by the jobs after.
+      sha: ${{ inputs.dry_run && github.sha || steps.commit.outputs.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -68,7 +70,10 @@ jobs:
           RUN_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          echo "sha=$(bash .github/scripts/release/resolve-tag.sh "$TAG" "$RUN_SHA")" >> "$GITHUB_OUTPUT"
+          # Assigned first, so that the exit status of the script is not hidden by echo.
+          sha="$(bash .github/scripts/release/resolve-tag.sh "$TAG" "$RUN_SHA")"
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::the tag did not resolve to a commit"; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
       - name: Tag must equal Cargo.toml version
         # This replaces the step that used to `sed` the version out of the
@@ -375,6 +380,7 @@ jobs:
           VERIFIED_SHA: ${{ needs.verify.outputs.sha }}
         run: |
           set -euo pipefail
+          [[ "$VERIFIED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::verify did not hand over a commit"; exit 1; }
           [ "$RUN_SHA" = "$VERIFIED_SHA" ] || { echo "::error::this run is at ${RUN_SHA} and verify checked ${VERIFIED_SHA}"; exit 1; }
           bash .github/scripts/release/resolve-tag.sh "$TAG" "$VERIFIED_SHA" > /dev/null
 

@@ -132,11 +132,21 @@ def check_release(findings: list) -> None:
 	verify = jobs.get("verify") or {}
 	if (verify.get("outputs") or {}).get("tag") != "${{ steps.tag.outputs.tag }}":
 		findings.append(f"{where}: verify must output the tag it validated, from the step with id `tag`")
-	if (verify.get("outputs") or {}).get("sha") != "${{ steps.commit.outputs.sha || github.sha }}":
-		findings.append(f"{where}: verify must output the commit the tag resolved to, from the step with id `commit`")
+	if (verify.get("outputs") or {}).get("sha") != "${{ inputs.dry_run && github.sha || steps.commit.outputs.sha }}":
+		findings.append(f"{where}: verify must output the commit the tag resolved to, from the step with id `commit`, and fall back to the run's commit for a rehearsal only")
 	commit_steps = [step for step in verify.get("steps") or [] if step.get("id") == "commit"]
-	if len(commit_steps) != 1 or 'resolve-tag.sh "$TAG" "$RUN_SHA"' not in str(commit_steps[0].get("run", "")):
-		findings.append(f"{where}: the step with id `commit` must resolve the tag with resolve-tag.sh, as refs/tags/<tag>")
+	commit_lines = [line.strip() for line in str((commit_steps or [{}])[0].get("run", "")).splitlines()]
+	if (
+		len(commit_steps) != 1
+		or commit_lines.count('sha="$(bash .github/scripts/release/resolve-tag.sh "$TAG" "$RUN_SHA")"') != 1
+		or commit_lines.count('[[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::the tag did not resolve to a commit"; exit 1; }') != 1
+		or commit_lines.count('echo "sha=$sha" >> "$GITHUB_OUTPUT"') != 1
+		or any("$(" in line for line in commit_lines if line.startswith("echo"))
+	):
+		findings.append(f"{where}: the step with id `commit` must assign the output of resolve-tag.sh first, check it is 40 hex digits, and only then write it (a command substitution inside echo hides its exit status)")
+	release_text = "\n".join(str(s.get("run", "")) for s in (jobs.get("release") or {}).get("steps") or [])
+	if '[[ "$VERIFIED_SHA" =~ ^[0-9a-f]{40}$ ]]' not in release_text:
+		findings.append(f"{where}: the release job must refuse a verified commit that is not 40 hex digits")
 	tag_steps = [step for step in verify.get("steps") or [] if step.get("id") == "tag"]
 	if len(tag_steps) != 1 or RELEASE_TAG_SHAPE not in str(tag_steps[0].get("run", "")):
 		findings.append(f"{where}: the step with id `tag` must check the tag against {RELEASE_TAG_SHAPE}")

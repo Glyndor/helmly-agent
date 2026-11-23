@@ -155,10 +155,22 @@ release_case "a rehearsal with permissions of its own is caught" "the rehearsal 
     permissions:
       contents: read'
 release_case "a verify that no longer emits the commit is caught" "verify must output the commit the tag resolved to" \
-	'      sha: ${{ steps.commit.outputs.sha || github.sha }}
+	'      sha: ${{ inputs.dry_run && github.sha || steps.commit.outputs.sha }}
 ' ''
-release_case "a verify that resolves the tag without the script is caught" "the step with id \`commit\` must resolve the tag with resolve-tag.sh" \
-	'echo "sha=$(bash .github/scripts/release/resolve-tag.sh "$TAG" "$RUN_SHA")" >> "$GITHUB_OUTPUT"' 'echo "sha=$RUN_SHA" >> "$GITHUB_OUTPUT"'
+release_case "a commit that falls back to the run's own when the tag gave nothing is caught" "fall back to the run's commit for a rehearsal only" \
+	'sha: ${{ inputs.dry_run && github.sha || steps.commit.outputs.sha }}' 'sha: ${{ steps.commit.outputs.sha || github.sha }}'
+C="the step with id \`commit\` must assign the output of resolve-tag.sh first"
+release_case "a verify that resolves the tag without the script is caught" "$C" \
+	'sha="$(bash .github/scripts/release/resolve-tag.sh "$TAG" "$RUN_SHA")"' 'sha="$RUN_SHA"'
+release_case "a command substitution inside echo, which hides the exit status, is caught" "$C" \
+	'          sha="$(bash .github/scripts/release/resolve-tag.sh "$TAG" "$RUN_SHA")"' '          sha=x
+          echo "sha=$(bash .github/scripts/release/resolve-tag.sh "$TAG" "$RUN_SHA")" >> "$GITHUB_OUTPUT"'
+release_case "a resolved commit that is not checked for its shape is caught" "$C" \
+	'          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::the tag did not resolve to a commit"; exit 1; }
+' ''
+release_case "a release job that no longer refuses an empty verified commit is caught" "the release job must refuse a verified commit that is not 40 hex digits" \
+	'          [[ "$VERIFIED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::verify did not hand over a commit"; exit 1; }
+' ''
 release_case "a release created without --verify-tag is caught" "the release is created with --verify-tag and without --target" \
 	'gh release create "$TAG" --verify-tag --generate-notes' 'gh release create "$TAG" --generate-notes'
 release_case "a release created with --target is caught" "the release is created with --verify-tag and without --target" \
@@ -202,6 +214,31 @@ release_case "a signing job whose first step is a checkout is caught" "the first
       - name: This run was started by a tag, or by hand from main or a tag'
 release_case "a guard that lets any branch through is caught" "the first step of the signing job must be the secretless check" \
 	'workflow_dispatch:refs/heads/main) ;;' 'workflow_dispatch:refs/heads/*) ;;'
+
+# The commit step of verify, run against a resolve-tag.sh that fails, says nothing, or lies.
+python3 -I - "$ROOT/.github/workflows/release.yml" "$WORK/commit.sh" << 'PY'
+import sys, yaml
+doc = yaml.safe_load(open(sys.argv[1]))
+step = [s for s in doc["jobs"]["verify"]["steps"] if s.get("id") == "commit"][0]
+open(sys.argv[2], "w").write(step["run"])
+PY
+GOOD=0123456789abcdef0123456789abcdef01234567
+# commit_step <resolve-tag.sh body>: exit code, and what the step wrote to GITHUB_OUTPUT
+commit_step() {
+	local rc=0
+	rm -rf "${WORK:?}/c" && mkdir -p "$WORK/c/.github/scripts/release"
+	printf '%s\n' "$1" > "$WORK/c/.github/scripts/release/resolve-tag.sh"
+	: > "$WORK/c/out"
+	(cd "$WORK/c" && env TAG=v2.0.2 RUN_SHA=$GOOD GITHUB_OUTPUT="$WORK/c/out" bash "$WORK/commit.sh" > /dev/null 2>&1) || rc=$?
+	echo "$rc:$(cat "$WORK/c/out")"
+}
+check "a tag that resolves hands its commit on" "0:sha=$GOOD" "$(commit_step "echo $GOOD")"
+check "a script that fails and prints nothing fails the step and writes nothing" "1:" "$(commit_step 'exit 1')"
+check "a script that fails after printing a commit fails the step and writes nothing" "1:" "$(commit_step "echo $GOOD; exit 1")"
+check "a script that succeeds and prints nothing fails the step" "1:" "$(commit_step 'exit 0')"
+check "a script that prints something that is not a commit fails the step" "1:" "$(commit_step 'echo main')"
+check "a script that prints an abbreviated commit fails the step" "1:" "$(commit_step 'echo 0123456')"
+check "a script that prints an upper case commit fails the step" "1:" "$(commit_step 'echo 0123456789ABCDEF0123456789ABCDEF01234567')"
 
 # The guard step itself, run with the events and refs it must tell apart.
 python3 -I - "$ROOT/.github/workflows/release.yml" "$WORK/guard.sh" << 'PY'
