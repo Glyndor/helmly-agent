@@ -1,13 +1,17 @@
 """Loading and naming: the strict YAML reader, the one enumerator of workflows and actions, and the check names each job produces."""
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
 
 import yaml
 
-ROOT = Path(__file__).resolve().parents[2]
+# The tree the checks read. A guard that runs from the base on a pull request puts the
+# change's `.github` in a directory of its own and names it here; the checks themselves are
+# always the ones next to this file.
+ROOT = Path(os.environ.get("CI_WIRING_TREE") or Path(__file__).resolve().parents[2]).resolve()
 
 
 WORKFLOWS = ROOT / ".github" / "workflows"

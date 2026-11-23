@@ -19,6 +19,10 @@ SCHEDULED_GIT_LINES = [
 ]
 
 
+# The one checkout of a ref that is allowed: the guard of the base checks out the base itself.
+GUARD_CHECKOUT_REF = "${{ github.event.merge_group.base_sha || github.sha }}"
+
+
 def check_foreign_refs(findings: list) -> None:
 	"""No job checks out a ref other than the event's.
 
@@ -31,6 +35,8 @@ def check_foreign_refs(findings: list) -> None:
 		for job_id, job in (load_yaml(path).get("jobs") or {}).items():
 			for step in job.get("steps") or []:
 				if str(step.get("uses", "")).startswith("actions/checkout") and "ref" in (step.get("with") or {}):
+					if (path.name, job_id) == ("wiring-guard.yml", "wiring-guard") and step["with"]["ref"] == GUARD_CHECKOUT_REF:
+						continue
 					findings.append(f"{path.name}: job {job_id!r} fetches another ref with a checkout; take the files it needs out of git as data")
 
 
