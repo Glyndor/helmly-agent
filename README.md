@@ -34,6 +34,14 @@ The toolchain is the one `rust-toolchain.toml` names; `rustup` installs it on
 first use. The agent does not link `podup` or any other Glyndor crate: it
 creates one rootless Podman user per tenant and runs `podman` as that user.
 
+Podman is therefore a requirement of the host the agent runs on. `setup-agent.sh`
+installs the distribution's `podman` package when it is missing. To install Podman
+yourself on Debian and Ubuntu:
+
+```bash
+curl -fsSL https://apt.glyndor.net/install/podman | sudo sh
+```
+
 ## Commands
 
 `helmly-agent` with no subcommand runs the daemon. The subcommands are helpers
@@ -41,7 +49,7 @@ for the installer and for the operator:
 
 | command | what it does |
 |---|---|
-| `logs [--follow] [--errors] [--since <time>]` | Show or stream the agent's journald logs. |
+| `logs [-f\|--follow] [--errors] [--since <time>]` | Show or stream the agent's journald logs. |
 | `gen-rand <bytes> [--encoding hex\|base64]` | Print cryptographically secure random bytes. |
 | `gen-uuid-v7` | Print a time-ordered UUIDv7. |
 | `gen-tls --san <address>... [--out-dir <dir>]` | Create this agent's mTLS key pair (`agent.crt.der`, `agent.key.der`, mode 0600) and print the certificate's SHA-256 fingerprint. It refuses to overwrite existing files, and the private key never leaves the host. `--san` is repeatable and `--out-dir` defaults to `/etc/glyndor/helmly/tls`. |
