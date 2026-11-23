@@ -1,0 +1,12 @@
+# The one place the Rust toolchain is chosen. Every workflow installs what this
+# file names (`rustup toolchain install` with no argument reads it), and so does
+# a local `cargo` run, so CI, the release build and a checkout cannot drift apart.
+#
+# Pinned to an exact release, not `stable`: an unpinned toolchain moves the day
+# upstream ships and reddens every open pull request for a change nobody made.
+# Dependabot does not bump this file, so raise it by hand when a new stable is
+# out, in a pull request that also fixes whatever the new clippy now reports.
+[toolchain]
+channel = "1.100.0"
+profile = "minimal"
+components = ["rustfmt", "clippy"]

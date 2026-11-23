@@ -293,7 +293,8 @@ async fn main() -> anyhow::Result<()> {
 				if sqlx::query("SELECT 1")
 					.fetch_one(&state_db.db)
 					.await
-					.is_err() && !state_db.is_locked_down()
+					.is_err()
+					&& !state_db.is_locked_down()
 				{
 					tracing::error!("PostgreSQL unreachable — entering lockdown");
 					state_db.set_lockdown(crate::state::LockdownReason::PgUnreachable);
