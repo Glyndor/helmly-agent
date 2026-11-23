@@ -73,6 +73,26 @@ def check_triggers(findings: list) -> None:
 		findings.append("main-guard.yml: develop-only must compare the head repository with this repository, since a fork can have a branch called develop")
 
 
+GATE_BASE_GUARD = 'if [ "$EVENT" = pull_request ] && [ "$BASE_REF" != develop ] && [ "$BASE_REF" != main ]; then'
+
+
+def check_bases(findings: list) -> None:
+	"""The bases are limited by the trigger, which is case sensitive, and checked again in the shell.
+
+	`==` in an expression ignores case, so the name of the gate cannot be what keeps a
+	branch called `Develop` out. The trigger lists exactly the two lowercase names, and the
+	gate checks the base exactly, with the value passed through env, before it approves.
+	"""
+	ci = load_yaml(WORKFLOWS / "ci.yml")
+	on = ci.get("on", ci.get(True)) or {}
+	if (on.get("pull_request") or {}).get("branches") != ["develop", "main"]:
+		findings.append("ci.yml: pull_request must be limited to exactly the bases [develop, main], in lowercase; the trigger is the one comparison here that tells case apart")
+	gate = (ci.get("jobs") or {}).get("ci-gate") or {}
+	run = "\n".join(str(step.get("run", "")) for step in gate.get("steps") or [])
+	if [line.strip() for line in run.splitlines()].count(GATE_BASE_GUARD) != 1:
+		findings.append("ci.yml: ci-gate must check in the shell that the base is exactly develop or main")
+
+
 def check_gate(findings: list) -> None:
 	"""`ci-gate` runs always and sees every other job of ci.yml."""
 	jobs = load_yaml(WORKFLOWS / "ci.yml")["jobs"]
@@ -157,7 +177,7 @@ def check_shape(findings: list) -> None:
 	threshold = (jobs.get("rust", {}).get("with") or {}).get("coverage-threshold", 0)
 	if not isinstance(threshold, int) or threshold < MIN_COVERAGE:
 		findings.append(f"ci.yml: the coverage threshold must be an integer of at least {MIN_COVERAGE}, the ratchet never goes down")
-	expected = {"EVENT": "${{ github.event_name }}"}
+	expected = {"EVENT": "${{ github.event_name }}", "BASE_REF": "${{ github.event.pull_request.base.ref }}"}
 	expected.update({var: "${{ needs." + job + ".result }}" for var, job in GATE_RESULTS.items()})
 	expected.update({var: "${{ needs.decide.outputs." + suite + " }}" for var, suite in GATE_PLANS.items()})
 	if (jobs.get("ci-gate", {}).get("env") or {}) != expected:
@@ -183,8 +203,8 @@ def check_shape(findings: list) -> None:
 		if lines.count(line) != 1:
 			findings.append(f"ci.yml: the plan step must contain exactly once: {line}")
 	plan_env = (steps[-1].get("env") or {}) if steps else {}
-	if lines.count('if [ "$BASE_REF" = main ]; then') != 1 or plan_env.get("BASE_REF") != "${{ github.event.pull_request.base.ref }}":
-		findings.append("ci.yml: the plan step must answer `true` for every suite when the pull request's base is main")
+	if lines.count('if [ "$BASE_REF" != develop ]; then') != 1 or plan_env.get("BASE_REF") != "${{ github.event.pull_request.base.ref }}":
+		findings.append("ci.yml: the plan step must answer `true` for every suite when the pull request's base is not develop")
 	try:
 		push_branch = lines.index('elif [ "$EVENT" = push ]; then')
 		end = lines.index("else", push_branch)

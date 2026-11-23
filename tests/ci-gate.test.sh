@@ -45,7 +45,7 @@ PY
 # request, except for the assignments given.
 gate() {
 	local rc=0
-	env EVENT=pull_request DECIDE=success DCO=success WORKFLOW_LINT=success SHELL_SUITE=success RUST=success AUDIT=success STRUCTURE=success \
+	env EVENT=pull_request BASE_REF=develop DECIDE=success DCO=success WORKFLOW_LINT=success SHELL_SUITE=success RUST=success AUDIT=success STRUCTURE=success \
 		PLAN_WORKFLOWS=true PLAN_SHELL=true PLAN_RUST=true "$@" bash "$WORK/gate.sh" > "$WORK/out" 2>&1 || rc=$?
 	echo "$rc"
 }
@@ -86,5 +86,16 @@ grep -q '^rust  *skipped  *false$' "$WORK/out" && r=found || r=missing
 check "the gate prints the rust row with its result and plan" "found" "$r"
 grep -q '^audit  *success  *-$' "$WORK/out" && r=found || r=missing
 check "the gate prints the audit row" "found" "$r"
+
+# The name of the gate depends on the base, and `==` in an expression ignores case, so
+# the gate itself checks the base exactly before it approves.
+check "a pull request into main passes" "0" "$(gate BASE_REF=main)"
+check "a pull request whose base is Develop, which an expression would read as develop, fails" "1" "$(gate BASE_REF=Develop)"
+grep -q "neither develop nor main" "$WORK/out" && r=found || r=missing
+check "and says why" "found" "$r"
+check "a pull request whose base is Main fails" "1" "$(gate BASE_REF=Main)"
+check "a pull request stacked on the branch of another one fails" "1" "$(gate BASE_REF=topic/other)"
+check "an empty base on a pull request fails" "1" "$(gate BASE_REF=)"
+check "a push has no base and passes" "0" "$(gate EVENT=push DCO=skipped BASE_REF=)"
 
 exit "$fail"

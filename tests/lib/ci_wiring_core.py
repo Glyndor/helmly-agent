@@ -64,7 +64,8 @@ PR_ONLY = "${{ github.event_name == 'pull_request' }}"
 # event and base branch. Every other `name:` with an expression is a finding
 # unless it is a matrix name this file can expand.
 GATE_NAME = (
-	"${{ github.event_name == 'pull_request' && (github.event.pull_request.base.ref == 'main' && 'ci-gate (main)' || 'ci-gate')"
+	"${{ github.event_name == 'pull_request' && (github.event.pull_request.base.ref == 'develop' && 'ci-gate'"
+	" || (github.event.pull_request.base.ref == 'main' && 'ci-gate (main)' || 'ci-gate (other base)'))"
 	" || format('ci-gate ({0})', github.event_name) }}"
 )
 
@@ -94,7 +95,9 @@ def expand_name(raw: str, job: dict, event: str, base: str) -> list:
 		return [raw]
 	if raw == GATE_NAME:
 		if event == "pull_request":
-			return ["ci-gate (main)" if base == "main" else "ci-gate"]
+			# `==` in an expression ignores case, so `Develop` is `develop` here.
+			lowered = base.lower()
+			return ["ci-gate" if lowered == "develop" else "ci-gate (main)" if lowered == "main" else "ci-gate (other base)"]
 		return [f"ci-gate ({event})"]
 	matrix = ((job.get("strategy") or {}).get("matrix")) or {}
 	keys = set(MATRIX_REF.findall(raw))

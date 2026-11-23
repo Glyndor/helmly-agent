@@ -163,7 +163,7 @@ sabotage ci.yml '    timeout-minutes: 5
 caught "a workflow with a key twice is refused by the parser" "duplicate key 'timeout-minutes'"
 
 fresh_copy
-sabotage ci.yml "    name: \${{ github.event_name == 'pull_request' && (github.event.pull_request.base.ref == 'main' && 'ci-gate (main)' || 'ci-gate') || format('ci-gate ({0})', github.event_name) }}" "    name: ci-gate"
+sabotage ci.yml "    name: \${{ github.event_name == 'pull_request' && (github.event.pull_request.base.ref == 'develop' && 'ci-gate' || (github.event.pull_request.base.ref == 'main' && 'ci-gate (main)' || 'ci-gate (other base)')) || format('ci-gate ({0})', github.event_name) }}" "    name: ci-gate"
 caught "a ci-gate named the same on push and pull_request is caught" "required check 'ci-gate' on develop is produced by more than one workflow or event"
 
 fresh_copy
@@ -195,15 +195,15 @@ PY
 caught "a cache restored next to the audit tools is caught" "a security tool is downloaded and checked on every run, never restored from a cache"
 
 fresh_copy
-sabotage ci.yml '            if [ "$BASE_REF" = main ]; then
-              all "a pull request into main runs every suite, with no plan"
+sabotage ci.yml '            if [ "$BASE_REF" != develop ]; then
+              all "the base is not develop, so no plan is trusted and every suite runs"
             fi
 ' ''
-caught "a plan step that stops running every suite for a base of main is caught" "the plan step must answer \`true\` for every suite when the pull request's base is main"
+caught "a plan step that stops running every suite for a base other than develop is caught" "the plan step must answer \`true\` for every suite when the pull request's base is not develop"
 
 # --- names: a skipped job reports its name too, and an expression is never trusted -----------------
 fresh_copy
-sabotage ci.yml "    name: \${{ github.event_name == 'pull_request' && (github.event.pull_request.base.ref == 'main' && 'ci-gate (main)' || 'ci-gate') || format('ci-gate ({0})', github.event_name) }}" "    name: \${{ github.event_name == 'pull_request' && 'ci-gate' || format('ci-gate ({0})', github.event_name) }}"
+sabotage ci.yml "    name: \${{ github.event_name == 'pull_request' && (github.event.pull_request.base.ref == 'develop' && 'ci-gate' || (github.event.pull_request.base.ref == 'main' && 'ci-gate (main)' || 'ci-gate (other base)')) || format('ci-gate ({0})', github.event_name) }}" "    name: \${{ github.event_name == 'pull_request' && 'ci-gate' || format('ci-gate ({0})', github.event_name) }}"
 caught "a gate named alike for a base of develop and a base of main is caught" "ci-gate must carry the known name expression"
 
 fresh_copy
@@ -436,5 +436,40 @@ caught "a structure job that waits for the plan is caught" "the structure job mu
 fresh_copy
 sabotage ci.yml "python3 .github/scripts/ci/structure.py --exceptions .github/structure.json || bad=1" "true"
 caught "a structure step that stops judging with the tree's copy is caught" "the structure step must judge with both copies"
+
+# --- the base is exact: the trigger tells case apart, the gate checks it again --------------
+fresh_copy
+sabotage ci.yml '    branches: [develop, main]
+    types: [opened, synchronize, reopened]' '    branches: [develop, main, Develop]
+    types: [opened, synchronize, reopened]'
+caught "a trigger that lets a branch called Develop through is caught" "pull_request must be limited to exactly the bases [develop, main], in lowercase"
+
+fresh_copy
+sabotage ci.yml '    branches: [develop, main]
+    types: [opened, synchronize, reopened]' '    types: [opened, synchronize, reopened]'
+caught "a trigger with no base filter is caught" "pull_request must be limited to exactly the bases [develop, main], in lowercase"
+
+fresh_copy
+sabotage ci.yml 'if [ "$EVENT" = pull_request ] && [ "$BASE_REF" != develop ] && [ "$BASE_REF" != main ]; then' 'if false; then'
+caught "a gate that stops checking the base in the shell is caught" "ci-gate must check in the shell that the base is exactly develop or main"
+
+fresh_copy
+sabotage ci.yml "'ci-gate (other base)'" "'ci-gate'"
+caught "a name that any other base can carry as the required one is caught" "ci-gate must carry the known name expression"
+
+fresh_copy
+sabotage ci.yml 'if [ "$BASE_REF" != develop ]; then' 'if [ "$BASE_REF" = main ]; then'
+caught "a plan that trusts the base planner for a base other than develop is caught" "the plan step"
+
+# A branch whose name only differs in case would pass an expression that compares with ==.
+fresh_copy
+python3 - "$WORK/tree" << 'PY'
+import json, sys
+sys.path.insert(0, sys.argv[1] + "/tests/lib")
+import ci_wiring as c
+names = c.expand_name(c.GATE_NAME, {}, "pull_request", "Develop")
+sys.exit(0 if names == ["ci-gate"] else 1)
+PY
+check "the model reads == the way Actions does, without distinguishing case" "0" "$?"
 
 exit "$fail"

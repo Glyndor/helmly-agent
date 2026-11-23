@@ -72,6 +72,7 @@ def main() -> int:
 		check_reusables_honour_run(findings)
 		check_triggers(findings)
 		check_gate(findings)
+		check_bases(findings)
 		check_write_token(findings)
 		check_suite_jobs_start(findings)
 		check_tests_run_once(findings)
