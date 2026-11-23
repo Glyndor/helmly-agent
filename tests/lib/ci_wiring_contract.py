@@ -20,6 +20,7 @@ CI_JOB_IFS = {
 	"shell": "${{ !cancelled() }}",
 	"rust": "${{ !cancelled() && (github.event_name != 'pull_request' || (needs.dco.result != 'failure' && needs.workflow-lint.result != 'failure' && needs.shell.result != 'failure')) }}",
 	"structure": "${{ !cancelled() && (github.event_name != 'pull_request' || (needs.dco.result != 'failure' && needs.workflow-lint.result != 'failure' && needs.shell.result != 'failure')) }}",
+	"pins": "${{ !cancelled() && (github.event_name != 'pull_request' || (needs.dco.result != 'failure' && needs.workflow-lint.result != 'failure' && needs.shell.result != 'failure')) }}",
 	"ci-gate": "${{ always() }}",
 }
 CI_JOBS_WITHOUT_IF = {"decide", "audit"}
@@ -128,6 +129,44 @@ def check_ci_contract(findings: list) -> None:
 		findings.append("ci.yml: the plan step must take the base and head commits from exactly their own expressions (BASE_SHA is the base of the pull request, not its head)")
 
 
+PINS_STEP_LINES = (
+	'git cat-file -e "$BASE_SHA^{commit}" || { echo "::error::the base commit cannot be read"; exit 1; }',
+	'listing="$(git ls-tree "$BASE_SHA" -- .github/scripts/ci/pins.py)" || { echo "::error::the base commit cannot be listed"; exit 1; }',
+	'git show "$BASE_SHA:.github/scripts/ci/pins.py" > "$tmp/pins.py" || { echo "::error::the base copy of the script cannot be read"; exit 1; }',
+	'python3 -I "$tmp/pins.py" --base "$BASE_SHA" || bad=1',
+	'python3 -I .github/scripts/ci/pins.py --base "$BASE_SHA" || bad=1',
+	'python3 -I .github/scripts/ci/pins.py || bad=1',
+)
+
+
+def check_pins_job(findings: list) -> None:
+	"""The pins job judges with the base's script first and runs on everything, with no plan.
+
+	The value of an action's pin is judged by `pins.py`, and the gate must count its result, or
+	taking the SHA out of the contract is a step back. The base's copy runs before anything of
+	the tree, with `python3 -I`, and a base commit that cannot be read is a failure, not an
+	absent check.
+	"""
+	jobs = load_yaml(WORKFLOWS / "ci.yml").get("jobs") or {}
+	pins = jobs.get("pins") or {}
+	if set(pins.get("needs") or []) != {"dco", "workflow-lint", "shell"} or "outputs." in str(pins.get("if", "")):
+		findings.append("ci.yml: the pins job must wait for the three cheap gates and have no plan of its own")
+	if "pins" not in set((jobs.get("ci-gate") or {}).get("needs") or []):
+		findings.append("ci.yml: ci-gate must need the pins job, or the value of a pin counts for nothing when merging")
+	steps = pins.get("steps") or [{}]
+	run = [line.strip() for line in str(steps[-1].get("run", "")).splitlines()]
+	for needle in PINS_STEP_LINES:
+		if run.count(needle) != 1:
+			findings.append(f"ci.yml: the pins step must have exactly one line: {needle}")
+	if all(line in run for line in PINS_STEP_LINES[3:5]) and run.index(PINS_STEP_LINES[3]) > run.index(PINS_STEP_LINES[4]):
+		findings.append("ci.yml: the pins step must run the base's script before this tree's")
+	if any("--remote-prefix" in line for line in run):
+		findings.append("ci.yml: the pins step must not name another place to ask for tags")
+	env = steps[-1].get("env") or {}
+	if env != {"EVENT": "${{ github.event_name }}", "BASE_SHA": "${{ github.event.pull_request.base.sha }}"}:
+		findings.append("ci.yml: the pins step must take the event and the base commit from exactly their own expressions")
+
+
 def check_rust_contract(findings: list) -> None:
 	jobs = load_yaml(WORKFLOWS / "reusable-rust-ci.yml").get("jobs") or {}
 	for job_id, expected in RUST_JOB_IFS.items():
@@ -184,6 +223,7 @@ def check_contract(findings: list) -> None:
 	check_no_continue_on_error(findings)
 	check_defaults_and_shell(findings)
 	check_ci_contract(findings)
+	check_pins_job(findings)
 	check_rust_contract(findings)
 	check_audit_action(findings)
 	check_security_concurrency(findings)

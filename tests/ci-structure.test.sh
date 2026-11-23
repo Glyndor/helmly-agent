@@ -117,10 +117,10 @@ pr_repo() {
 }
 # judge <name> <event>: exit code of the step with HEAD as the pull request
 judge() {
-	local rc=0
+	local rc=0 base="${3:-}"
 	git -C "$WORK/$1" add -A
 	git -C "$WORK/$1" -c user.email=t@example.invalid -c user.name=t commit -q --allow-empty -m change
-	(cd "$WORK/$1" && env RUNNER_TEMP="$WORK/tmp-$1" EVENT="$2" BASE_SHA="$(git rev-parse HEAD~1)" bash "$WORK/step.sh" > "$WORK/$1.out" 2>&1) || rc=$?
+	(cd "$WORK/$1" && env RUNNER_TEMP="$WORK/tmp-$1" EVENT="$2" BASE_SHA="${base:-$(git rev-parse HEAD~1)}" bash "$WORK/step.sh" > "$WORK/$1.out" 2>&1) || rc=$?
 	echo "$rc"
 }
 
@@ -225,5 +225,13 @@ git -C "$WORK/r" -c user.email=t@example.invalid -c user.name=t commit -q -m "ba
 lines 480 "$WORK/r/big.sh"
 echo '{"files": {}, "folders": {}}' > "$WORK/r/.github/structure.json"
 check "a file that shrinks under the limit and drops its exception is green" "0" "$(judge r pull_request)"
+
+# A base commit that cannot be read is not a base without the check: the step fails, and
+# runs nothing, instead of judging with the tree's copy alone.
+pr_repo s
+lines 10 "$WORK/s/ok.sh"
+check "a base commit that cannot be read is red, not 'no check yet'" "1" "$(judge s pull_request 0000000000000000000000000000000000000000)"
+grep -q 'cannot be read' "$WORK/s.out" && r=said || r=silent
+check "and the step says the base commit cannot be read" "said" "$r"
 
 exit "$fail"

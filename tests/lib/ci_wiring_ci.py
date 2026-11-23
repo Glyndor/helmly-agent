@@ -131,6 +131,7 @@ GATE_RESULTS = {
 	"RUST": "rust",
 	"AUDIT": "audit",
 	"STRUCTURE": "structure",
+	"PINS": "pins",
 }
 
 

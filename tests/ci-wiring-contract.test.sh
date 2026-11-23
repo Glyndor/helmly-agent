@@ -160,4 +160,66 @@ case_in $W/codeql.yml "a job named like a required check in another case is caug
 
   analyze:'
 
+# --- the value of a pin has a judge, and the gate counts it ---------------------------------
+case_in $W/ci.yml "a gate that no longer needs the pins job is caught" "ci-gate does not need 'pins'" \
+	'rust, audit, structure, pins]' 'rust, audit, structure]'
+case_in $W/ci.yml "a pins job that waits for the plan is caught" "the pins job must wait for the three cheap gates and have no plan of its own" \
+	'  pins:
+    needs: [dco, workflow-lint, shell]' '  pins:
+    needs: [decide, dco, workflow-lint, shell]'
+fresh_copy
+python3 - "$WORK/tree/$W/ci.yml" << 'PY'
+import sys
+path = sys.argv[1]
+text = open(path).read()
+tree = "            python3 -I .github/scripts/ci/pins.py --base \"$BASE_SHA\" || bad=1\n"
+base = "              python3 -I \"$tmp/pins.py\" --base \"$BASE_SHA\" || bad=1\n"
+if tree not in text or base not in text:
+	sys.exit("sabotage target not found")
+mark = "@@"
+text = text.replace(tree, mark, 1).replace(base, tree.replace("            ", "              ", 1), 1).replace(mark, base.replace("              ", "            ", 1), 1)
+open(path, "w").write(text)
+PY
+caught "a pins step that judges with the tree's script before the base's is caught" "the pins step must run the base's script before this tree's"
+case_in $W/ci.yml "a pins step that reads an unreadable base as an absent one is caught" "the pins step must have exactly one line: git cat-file -e" \
+	'            git cat-file -e "$BASE_SHA^{commit}" || { echo "::error::the base commit cannot be read"; exit 1; }
+            listing="$(git ls-tree "$BASE_SHA" -- .github/scripts/ci/pins.py)"' '            listing="$(git ls-tree "$BASE_SHA" -- .github/scripts/ci/pins.py)"'
+case_in $W/ci.yml "a pins step that runs the base script without -I is caught" "the pins step must have exactly one line: python3 -I \"\$tmp/pins.py\"" \
+	'python3 -I "$tmp/pins.py" --base "$BASE_SHA" || bad=1' 'python3 "$tmp/pins.py" --base "$BASE_SHA" || bad=1'
+case_in $W/ci.yml "a pins step that asks for tags somewhere else is caught" "the pins step must not name another place to ask for tags" \
+	'python3 -I .github/scripts/ci/pins.py || bad=1' 'python3 -I .github/scripts/ci/pins.py --remote-prefix http://example.invalid/ || bad=1'
+case_in $W/ci.yml "a pins step that takes the base commit from the head is caught" "the pins step must take the event and the base commit from exactly their own expressions" \
+	'          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -uo pipefail
+          bad=0
+          tmp="$(mktemp -d' '          BASE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -uo pipefail
+          bad=0
+          tmp="$(mktemp -d'
+case_in $W/ci.yml "a pins job whose condition is relaxed is caught" "the condition of job 'pins' is not the pinned one" \
+	'  pins:
+    needs: [dco, workflow-lint, shell]
+    if: ${{ !cancelled() && (' '  pins:
+    needs: [dco, workflow-lint, shell]
+    if: ${{ always() || (' 
+
+# --- a bump of the pins, as Dependabot makes it, is not a change of the contract ---------------
+fresh_copy
+bump_pins
+check "every pinned action moved to another SHA and version: the contract still holds" "none" "$(finding)"
+fresh_copy
+bump_pins
+python3 - "$WORK/tree/$W/release.yml" << 'PY'
+import re, sys
+path = sys.argv[1]
+text = open(path).read()
+new = re.sub(r"(      - uses: actions/checkout@\S+ # \S+\n        with:\n          persist-credentials: false)", r"\1\n          ref: main", text, count=1)
+if new == text:
+	sys.exit("sabotage target not found")
+open(path, "w").write(new)
+PY
+caught "after a bump the contract still catches a checkout of a ref" "checks out a ref; every job runs at the commit of the run"
+
 exit "$fail"

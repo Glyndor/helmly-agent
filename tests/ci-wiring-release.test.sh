@@ -15,13 +15,23 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/wiring.sh"
 # --- the release workflow --------------------------------------------------------------
 release_case() { # release_case <description> <expected> <old> <new> [count]
 	fresh_copy
+	[[ -z "${BUMPED:-}" ]] || bump_pins
 	python3 - "$WORK/tree/.github/workflows/release.yml" "$3" "$4" "${5:-1}" << 'PY'
-import sys
+import re, sys
 path, old, new, count = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
 text = open(path).read()
-if old not in text:
+# A pin in the text to find is any pin of that action, so that a bump of its SHA and
+# version, which Dependabot makes, does not make the case look for text that is gone.
+pin = re.compile(r"((?:actions|github)/[\w./-]+)@[0-9a-f]{40}(?: # v[0-9.]+)?")
+pattern = ""
+last = 0
+for m in pin.finditer(old):
+	pattern += re.escape(old[last:m.start()]) + re.escape(m.group(1)) + r"@[0-9a-f]{40}(?: # v[0-9.]+)?"
+	last = m.end()
+pattern += re.escape(old[last:])
+if not re.search(pattern, text):
 	sys.exit("sabotage target not found: " + old)
-open(path, "w").write(text.replace(old, new, count))
+open(path, "w").write(re.sub(pattern, lambda _: new, text, count=count))
 PY
 	caught "$1" "$2"
 }
@@ -260,5 +270,13 @@ check "a pushed branch is refused" "1" "$(guard push refs/heads/main)"
 check "a pull request is refused" "1" "$(guard pull_request refs/pull/1/merge)"
 check "a ref that only starts like main is refused" "1" "$(guard workflow_dispatch refs/heads/main-evil)"
 check "an empty event is refused" "1" "$(guard '' refs/tags/v2.0.2)"
+
+# The same cases on a tree whose pins were all bumped: none of them depends on the value of a pin.
+if [[ -z "${BUMPED:-}" ]]; then
+	rc=0
+	BUMPED=1 bash "${BASH_SOURCE[0]}" > "$WORK/bumped.out" 2>&1 || rc=$?
+	check "the release cases give the same answers on a tree whose pins were bumped" "0" "$rc"
+	grep -v '^ok' "$WORK/bumped.out" | head -n 5 || true
+fi
 
 exit "$fail"

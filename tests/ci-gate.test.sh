@@ -45,7 +45,7 @@ PY
 # request, except for the assignments given.
 gate() {
 	local rc=0
-	env EVENT=pull_request BASE_REF=develop DECIDE=success DCO=success WORKFLOW_LINT=success SHELL_SUITE=success RUST=success AUDIT=success STRUCTURE=success \
+	env EVENT=pull_request BASE_REF=develop DECIDE=success DCO=success WORKFLOW_LINT=success SHELL_SUITE=success RUST=success AUDIT=success STRUCTURE=success PINS=success \
 		PLAN_WORKFLOWS=true PLAN_SHELL=true PLAN_RUST=true "$@" bash "$WORK/gate.sh" > "$WORK/out" 2>&1 || rc=$?
 	echo "$rc"
 }
@@ -72,6 +72,10 @@ check "a suite that failed although the plan said false: red" "1" "$(gate RUST=f
 check "the audit failing: red" "1" "$(gate AUDIT=failure)"
 check "the structure check failing: red" "1" "$(gate STRUCTURE=failure)"
 check "the structure check skipped, which no plan can excuse: red" "1" "$(gate STRUCTURE=skipped)"
+check "the pins check failing: red" "1" "$(gate PINS=failure)"
+check "the pins check skipped, which no plan can excuse: red" "1" "$(gate PINS=skipped)"
+check "the pins check cancelled: red" "1" "$(gate PINS=cancelled)"
+check "the pins check skipped on a push, still no plan to excuse it: red" "1" "$(gate EVENT=push DCO=skipped PINS=skipped)"
 check "the structure check skipped on a push, still no plan to excuse it: red" "1" "$(gate EVENT=push DCO=skipped STRUCTURE=skipped)"
 check "a suite that was cancelled: red" "1" "$(gate AUDIT=cancelled)"
 

@@ -166,7 +166,7 @@ CI is split by responsibility rather than gathered in one file:
 
 | file | what runs there |
 |---|---|
-| `ci.yml` | on a pull request into `develop` or `main`, and on a push to `develop`: the plan (`decide`), DCO, workflow lint, the shell suite, the Rust suite (rustfmt and clippy, then the tests once, run under coverage), the dependency audit, the structure check, and `ci-gate`, the check a pull request must pass (see below) |
+| `ci.yml` | on a pull request into `develop` or `main`, and on a push to `develop`: the plan (`decide`), DCO, workflow lint, the shell suite, the Rust suite (rustfmt and clippy, then the tests once, run under coverage), the dependency audit, the structure check, the pins check, and `ci-gate`, the check a pull request must pass (see below) |
 | `codeql.yml` | CodeQL analysis of the workflows and the Rust code, on pull requests and pushes to `develop` and `main`, and weekly |
 | `audit.yml` | the weekly `cargo audit` of the lockfile of `main` and of `develop`, taken out of git as data, for advisories published while nothing is pushed (`cargo deny` runs in the `audit` job of `ci.yml`) |
 | `freshness.yml` | weekly: fails when Dependabot has gone quiet |
@@ -187,8 +187,8 @@ that no suite claims. Add the path of a new file to the map in the same change.
 **What a pull request must pass.** GitHub counts a skipped required check as
 passed, so no suite is required by its own name. `ci-gate` always runs and fails
 unless the plan succeeded and each suite succeeded or was skipped because the
-plan said it had nothing to check; the audit and the structure check have no plan
-and must succeed. The gate is named by the base branch: `ci-gate` for a pull request
+plan said it had nothing to check; the audit, the structure check and the pins check have no plan and
+must succeed. The gate is named by the base branch: `ci-gate` for a pull request
 into `develop`, `ci-gate (main)` for one into `main` (which runs every suite with no
 plan), and `ci-gate (push)` for a push, so the result of one event cannot satisfy the
 requirement of another. The rulesets require `ci-gate` and the DCO check on
@@ -196,6 +196,17 @@ requirement of another. The rulesets require `ci-gate` and the DCO check on
 CodeQL rule.
 `.github/required-checks.json` is a copy of those names, and
 `tests/ci-wiring.test.sh` fails when a workflow stops emitting one.
+
+**Pins.** The wiring tests do not compare the value of a pin, so that the pull
+requests of Dependabot, which change a SHA and its version comment together, pass.
+`.github/scripts/ci/pins.py` judges the value instead, on every pull request and
+push: each `uses` is from `actions` or `github`, is pinned to a SHA with a
+`# vMAJOR.MINOR.PATCH` comment, and that SHA is the commit the tag of that version
+points at in that repository (asked with `git ls-remote`; if the question cannot be
+answered the check fails). One repository has one pin in the whole tree, and a
+pull request cannot lower the version the base has. On a pull request the script
+of the base commit runs first. Images must be pinned by digest and come from a list
+that is empty today.
 
 **The cheap checks come first.** The workflow lint, the shell suite and the DCO
 check gate the Rust suite on a pull request; inside it the tests are built and

@@ -62,3 +62,23 @@ caught() {
 	fi
 }
 
+
+# bump_pins: in the copy, move every pinned action to another SHA and the next patch version,
+# the way a Dependabot pull request does (both change together, nothing else does).
+bump_pins() {
+	python3 -I - "$WORK/tree/.github" << 'PY'
+import hashlib, pathlib, re, sys
+pin = re.compile(r"((?:actions|github)/[\w./-]+)@([0-9a-f]{40}) # v(\d+)\.(\d+)\.(\d+)")
+def bump(m):
+	new = hashlib.sha1(m.group(2).encode()).hexdigest()
+	return f"{m.group(1)}@{new} # v{m.group(3)}.{m.group(4)}.{int(m.group(5)) + 1}"
+count = 0
+for path in pathlib.Path(sys.argv[1]).rglob("*.y*ml"):
+	text = path.read_text()
+	new, n = pin.subn(bump, text)
+	path.write_text(new)
+	count += n
+if not count:
+	sys.exit("no pin was bumped")
+PY
+}
