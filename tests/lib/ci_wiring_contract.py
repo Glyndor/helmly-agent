@@ -6,8 +6,9 @@ here exactly, and a property this file does not know is a finding: `continue-on-
 (a failing step that leaves the job green), `defaults` and `shell` (a shell that exits
 without reading the script), the whole `if` of each job and step, the environment that ties
 the plan's commits to their expression, the outputs of the plan, the conditions and commands
-of the audit action, and the conditions of the reusable Rust workflow, whose caller reads
-only one result in which a skipped job counts as passed.
+of the audit action, the conditions of the reusable Rust workflow, whose caller reads
+only one result in which a skipped job counts as passed, and the database the Rust tests run
+against, without which the authentication tests skip themselves.
 """
 
 import re
@@ -52,6 +53,17 @@ OUTCOME_ENV = {
 	"TEST": "${{ needs.test.result }}",
 	"COVERAGE": "${{ needs.coverage.result }}",
 }
+# The database service of the jobs that run the Rust tests. The image is the official one at
+# the major the installer runs, by digest; the tests migrate the database themselves and
+# fail under CI when there is none (internal/auth/test_db.rs), so the variables are pinned
+# whole and `CI` may not be set by hand.
+POSTGRES_IMAGE = re.compile(r"^postgres:18@sha256:[0-9a-f]{64}$")
+POSTGRES_ENV = {"POSTGRES_PASSWORD": "postgres", "POSTGRES_DB": "helmly_test"}
+DATABASE_JOB_ENV = {
+	"DATABASE_URL": "postgres://postgres:postgres@localhost:5432/helmly_test",
+	"SQLX_OFFLINE": "true",
+}
+DATABASE_JOBS = ("test", "coverage")
 # The steps of the audit action that run a tool, and the condition and command of each.
 AUDIT_STEPS = {
 	"Install the toolchain": ("${{ inputs.lockfile == '' }}", "rustup toolchain install"),
@@ -184,6 +196,43 @@ def check_rust_contract(findings: list) -> None:
 			findings.append(f"reusable-rust-ci.yml: outcome no longer requires: {needle}")
 
 
+def _env_blocks(node):
+	"""Every mapping found under an `env` key, at any depth."""
+	if isinstance(node, dict):
+		for key, value in node.items():
+			if key == "env" and isinstance(value, dict):
+				yield value
+			yield from _env_blocks(value)
+	elif isinstance(node, list):
+		for item in node:
+			yield from _env_blocks(item)
+
+
+def check_rust_database(findings: list) -> None:
+	"""The jobs that run the Rust tests have the same pinned PostgreSQL, and nothing turns `CI` off."""
+	doc = load_yaml(WORKFLOWS / "reusable-rust-ci.yml")
+	jobs = doc.get("jobs") or {}
+	images = set()
+	for job_id in DATABASE_JOBS:
+		job = jobs.get(job_id) or {}
+		services = job.get("services") or {}
+		postgres = services.get("postgres") or {}
+		if set(services) != {"postgres"}:
+			findings.append(f"reusable-rust-ci.yml: job {job_id!r} must have the postgres service and no other")
+		image = str(postgres.get("image", ""))
+		images.add(image)
+		if not POSTGRES_IMAGE.match(image):
+			findings.append(f"reusable-rust-ci.yml: the postgres service of job {job_id!r} must be postgres:18 pinned by digest")
+		if postgres.get("env") != POSTGRES_ENV:
+			findings.append(f"reusable-rust-ci.yml: the postgres service of job {job_id!r} must set exactly {sorted(POSTGRES_ENV)}")
+		if job.get("env") != DATABASE_JOB_ENV:
+			findings.append(f"reusable-rust-ci.yml: job {job_id!r} must set exactly DATABASE_URL and SQLX_OFFLINE, as pinned")
+	if len(images) > 1:
+		findings.append("reusable-rust-ci.yml: the test and coverage jobs must use the same postgres image")
+	if any("CI" in block for block in _env_blocks(doc)):
+		findings.append("reusable-rust-ci.yml: sets CI by hand; the runner sets it, and a false value would let the database tests skip")
+
+
 def check_audit_action(findings: list) -> None:
 	steps = (load_yaml(ROOT / ".github" / "actions" / "cargo-audit" / "action.yml").get("runs") or {}).get("steps") or []
 	seen = set()
@@ -243,5 +292,6 @@ def check_contract(findings: list) -> None:
 	check_ci_contract(findings)
 	check_pins_job(findings)
 	check_rust_contract(findings)
+	check_rust_database(findings)
 	check_audit_action(findings)
 	check_security_concurrency(findings)

@@ -12,6 +12,8 @@ mod podman;
 mod server;
 mod state;
 mod sync;
+#[cfg(test)]
+mod test_db;
 mod tls_keypair;
 pub mod update;
 mod ws_client;

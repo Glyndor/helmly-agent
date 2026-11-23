@@ -109,6 +109,15 @@ cargo audit --deny warnings
 cargo deny check
 python3 .github/scripts/ci/structure.py --exceptions .github/structure.json
 ```
+The authentication tests need a PostgreSQL database. In CI the `Test` and
+`Coverage` jobs start one (PostgreSQL 18, by digest, in
+`reusable-rust-ci.yml`) and set `DATABASE_URL`; the tests apply the migrations to
+it themselves. Under `CI` a missing `DATABASE_URL` fails them. On a workstation
+without one they skip with a `SKIPPED` line in the output, so point
+`DATABASE_URL` at a throwaway database, for example
+`postgres://postgres:postgres@localhost:5432/helmly_test`, and set
+`SQLX_OFFLINE=true` so the query macros keep using the committed `.sqlx` cache.
+
 The Rust toolchain is the one `rust-toolchain.toml` names. `cargo audit` and
 `cargo deny` are the release binaries pinned in
 `.github/actions/cargo-audit/action.yml`, with the ignores in

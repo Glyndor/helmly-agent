@@ -127,6 +127,40 @@ case_in $W/reusable-rust-ci.yml "an outcome that reads another result is caught"
 case_in $W/reusable-rust-ci.yml "an outcome that no longer requires coverage is caught" "outcome no longer requires" \
 	'want coverage "$COVERAGE" success' 'want coverage "$COVERAGE" skipped'
 
+# --- the database of the Rust tests ---------------------------------------------------------------
+IMG=postgres:18@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
+case_in $W/reusable-rust-ci.yml "a postgres image by tag alone is caught" "must be postgres:18 pinned by digest" \
+	"image: $IMG" 'image: postgres:18'
+case_in $W/reusable-rust-ci.yml "another major of postgres is caught" "must be postgres:18 pinned by digest" \
+	"image: $IMG" "image: postgres:17@sha256:${IMG#*@sha256:}"
+case_in $W/reusable-rust-ci.yml "a database that is not postgres is caught" "must be postgres:18 pinned by digest" \
+	"image: $IMG" "image: mariadb@sha256:${IMG#*@sha256:}"
+case_in $W/reusable-rust-ci.yml "a test job whose database service is gone is caught" "must have the postgres service and no other" \
+	'    services:
+      postgres:' '    services:
+      cache:'
+case_in $W/reusable-rust-ci.yml "a second service next to the database is caught" "must have the postgres service and no other" \
+	'    services:
+      postgres:' '    services:
+      redis:
+        image: redis
+      postgres:'
+case_in $W/reusable-rust-ci.yml "a changed database URL is caught" "must set exactly DATABASE_URL and SQLX_OFFLINE" \
+	'DATABASE_URL: postgres://postgres:postgres@localhost:5432/helmly_test' 'DATABASE_URL: postgres://postgres:postgres@localhost:5432/other'
+case_in $W/reusable-rust-ci.yml "sqlx left online, which would compile against an empty database, is caught" "must set exactly DATABASE_URL and SQLX_OFFLINE" \
+	'SQLX_OFFLINE: "true"' 'SQLX_OFFLINE: "false"'
+case_in $W/reusable-rust-ci.yml "a different password for the service is caught" "must set exactly ['POSTGRES_DB', 'POSTGRES_PASSWORD']" \
+	'POSTGRES_PASSWORD: postgres' 'POSTGRES_PASSWORD: other'
+case_in $W/reusable-rust-ci.yml "CI turned off by hand, so the database tests may skip, is caught" "sets CI by hand" \
+	'SQLX_OFFLINE: "true"
+    steps:' 'SQLX_OFFLINE: "true"
+      CI: "false"
+    steps:'
+case_in $W/reusable-rust-ci.yml "a step that sets CI for the tests is caught" "sets CI by hand" \
+	'        run: cargo test --locked --all-features --workspace' '        env:
+          CI: ""
+        run: cargo test --locked --all-features --workspace'
+
 # --- security results are not cancelled -----------------------------------------------------------
 C="the concurrency must be the pinned group, cancelling only a run of the same pull request"
 case_in $W/ci.yml "a gate workflow that never cancels, so every push waits behind the last one, is caught" "$C" \

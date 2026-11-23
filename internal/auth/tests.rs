@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_db::db_pool;
 
 // --- verify_bearer ---
 
@@ -103,9 +104,9 @@ fn signed_command_signature_verifies() {
 
 // ---- Replay / freshness — full verify_command path (§12.1) -------------
 //
-// These tests require DATABASE_URL pointing at a postgres with the agent
-// migrations applied; they skip when DATABASE_URL is absent (e.g. local
-// `cargo test` outside the dev compose).
+// These tests need a PostgreSQL database (`DATABASE_URL`); `crate::test_db::db_pool`
+// applies the migrations to it. Without one they skip with a warning on a
+// workstation and fail under `CI`, so a pipeline cannot pass them unrun.
 
 use ed25519_dalek::Signer;
 use serde_json::json;
@@ -149,11 +150,6 @@ fn build_signed_command_type(
 		payload: payload_b64,
 		signature: sig_b64,
 	}
-}
-
-async fn db_pool() -> Option<PgPool> {
-	let url = std::env::var("DATABASE_URL").ok()?;
-	PgPool::connect(&url).await.ok()
 }
 
 #[tokio::test]

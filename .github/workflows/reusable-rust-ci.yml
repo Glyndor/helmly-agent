@@ -82,6 +82,34 @@ jobs:
     runs-on: ubuntu-latest
     # Measured 116 s mean, 163 s worst over 21 runs.
     timeout-minutes: 20
+    # The authentication and audit log tests need a database: they apply the
+    # migrations to it and check nonce replay, stale and future timestamps, wrong
+    # keys and the hash chain against it. Without one they would pass having
+    # asserted nothing, so under `CI` a missing `DATABASE_URL` fails them
+    # (internal/test_db.rs). The major is
+    # the one the installer runs (PostgreSQL 18 in setup-agent.sh). The digest
+    # was read from the registry on 2026-11-23 for the tag `18` (18.7); bump it
+    # on purpose, a moving tag would change what the tests run against. The
+    # `coverage` job runs the same tests and carries the same service, and the
+    # wiring contract holds the two equal.
+    services:
+      postgres:
+        image: postgres:18@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: helmly_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/helmly_test
+      # Compile the sqlx query macros against the committed .sqlx cache. The
+      # service database has no schema at compile time; the tests migrate it.
+      SQLX_OFFLINE: "true"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -110,6 +138,25 @@ jobs:
     runs-on: ubuntu-latest
     # Measured 122 s mean, 186 s worst over 21 runs.
     timeout-minutes: 25
+    # The same database service as the `test` job, for the same tests.
+    services:
+      postgres:
+        image: postgres:18@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: helmly_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/helmly_test
+      # Compile the sqlx query macros against the committed .sqlx cache. The
+      # service database has no schema at compile time; the tests migrate it.
+      SQLX_OFFLINE: "true"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

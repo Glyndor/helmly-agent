@@ -149,24 +149,27 @@ pub async fn append(db: &PgPool, entry: AuditEntry<'_>) -> Result<()> {
 mod tests {
 	//! Integration tests for the audit log hash chain (§12.10 test.md).
 	//!
-	//! Requires DATABASE_URL pointing at a postgres with the agent migrations
-	//! applied (`sqlx migrate run --source agent/migrations`).  CI provides
-	//! this via the `agent.yml` postgres service.
+	//! They need a PostgreSQL database (`DATABASE_URL`); `crate::test_db` applies
+	//! the migrations to it, skips with a warning on a workstation without one
+	//! and fails under `CI`. The Rust CI jobs provide the database as a service.
 
 	use super::*;
-	use std::env;
 
+	/// The tests below truncate `audit_log` and read "the last row", so they
+	/// cannot overlap. `cargo test` runs tests in parallel by default and CI
+	/// does not pass `--test-threads=1`, so each test holds this for its length.
+	static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+	/// The shared test database (see `crate::test_db`), emptied of audit rows so
+	/// a test does not depend on what an earlier one left behind. The
+	/// `tampered_*` test in particular leaves an intentionally broken row that
+	/// would otherwise wedge the chain for every later run.
 	async fn pool() -> Option<PgPool> {
-		let url = env::var("DATABASE_URL").ok()?;
-		let db = PgPool::connect(&url).await.ok()?;
-		// Each test starts from a clean audit_log so its results don't depend
-		// on what previous tests left behind.  The `tampered_*` test in
-		// particular leaves an intentionally-broken row that would otherwise
-		// wedge the chain for every subsequent invocation.
-		//
-		// Tests are gated to run with `--test-threads=1` (CI does this) so the
-		// truncate cannot race a parallel test's reads.
-		sqlx::query!("TRUNCATE audit_log").execute(&db).await.ok();
+		let db = crate::test_db::db_pool().await?;
+		sqlx::query!("TRUNCATE audit_log")
+			.execute(&db)
+			.await
+			.expect("empty audit_log");
 		Some(db)
 	}
 
@@ -185,10 +188,8 @@ mod tests {
 	/// starts cleanly without depending on any pre-existing row.
 	#[tokio::test]
 	async fn first_entry_uses_genesis_sentinel() {
-		let Some(db) = pool().await else {
-			eprintln!("DATABASE_URL not set — skipping");
-			return;
-		};
+		let _serial = SERIAL.lock().await;
+		let Some(db) = pool().await else { return };
 		// Use a fresh agent_id per test run so unrelated rows don't pollute the
 		// chain query (audit_log fetches the most-recent row globally, so we
 		// verify by reading back our row directly).
@@ -216,6 +217,7 @@ mod tests {
 	/// first entry's `entry_hash`.
 	#[tokio::test]
 	async fn second_entry_links_to_first() {
+		let _serial = SERIAL.lock().await;
 		let Some(db) = pool().await else { return };
 
 		// Two entries in quick succession; they may not be adjacent globally
@@ -255,6 +257,7 @@ mod tests {
 	/// instead of silently extending a broken chain.
 	#[tokio::test]
 	async fn tampered_previous_entry_breaks_chain() {
+		let _serial = SERIAL.lock().await;
 		let Some(db) = pool().await else { return };
 
 		let agent_id = Uuid::now_v7();
@@ -288,8 +291,8 @@ mod tests {
 
 		// The integrity check fires only when the *globally* last row is the
 		// tampered one (because `append` looks at the most-recent row in the
-		// table).  Tests run serially in CI (`--test-threads=1`), so this row
-		// is in fact the last.
+		// table).  The tests of this module hold `SERIAL`, so this row is in
+		// fact the last.
 		let res = append(
 			&db,
 			entry(agent_id, "test.tamper.next", AuditResult::Success),
