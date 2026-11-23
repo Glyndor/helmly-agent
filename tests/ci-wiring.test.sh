@@ -35,7 +35,7 @@ check "a ci-gate that does not run always is caught" \
 	"ci.yml: ci-gate must run \`if: \${{ always() }}\`, or a skipped gate reports success" "$(finding)"
 
 fresh_copy
-sed -i 's/^    needs: \[decide, dco, workflow-lint, shell, rust, audit, structure\]$/    needs: [decide, dco, workflow-lint, shell, rust, structure]/' "$WORK/tree/.github/workflows/ci.yml"
+sed -i 's/^    needs: \[decide, dco, workflow-lint, shell, rust, audit, structure, pins\]$/    needs: [decide, dco, workflow-lint, shell, rust, structure, pins]/' "$WORK/tree/.github/workflows/ci.yml"
 check "a job that ci-gate no longer judges is caught" "ci.yml: ci-gate does not need 'audit', so its result is not judged" "$(finding)"
 
 fresh_copy

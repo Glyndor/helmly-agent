@@ -18,6 +18,14 @@ and an entry whose ceiling sits more than 20 above the real number fails and
 says what to lower it to. So an exception never outlives its cause and never
 quietly grows.
 
+`--growth-only` keeps the two findings about growth (a subject over its limit with no
+exception, and over its ceiling) and drops the ones about the list itself (stale,
+slack, unknown names). CI runs the copy of the script and the exceptions that the base
+commit holds with it on a pull request, so a change cannot approve its own numbers: a
+folder the base does not list is judged with the default, and a listed one with the base's
+ceiling. The ratchet findings must not apply there, or the change that shortens a listed
+file and lowers its own ceiling would fail against a list that still says the old number.
+
 Exit 0 when the tree fits, 1 with one finding per line otherwise, 2 when the
 input cannot be read.
 """
@@ -62,7 +70,7 @@ def folder_sizes(paths: list) -> Counter:
 	return sizes
 
 
-def judge(kind: str, subject: str, actual: int, limit: int, exceptions: dict) -> list:
+def judge(kind: str, subject: str, actual: int, limit: int, exceptions: dict, growth_only: bool = False) -> list:
 	entry = exceptions.get(subject)
 	if entry is None:
 		if actual > limit:
@@ -71,6 +79,10 @@ def judge(kind: str, subject: str, actual: int, limit: int, exceptions: dict) ->
 	problems = []
 	if not str(entry.get("reason", "")).strip() or not isinstance(entry.get("ceiling"), int):
 		return [f"the exception for {subject} needs an integer ceiling and a written reason"]
+	if growth_only:
+		if actual > limit and actual > entry["ceiling"]:
+			problems.append(f"{kind} {subject} has {actual}, over its ceiling of {entry['ceiling']}")
+		return problems
 	if actual <= limit:
 		problems.append(f"the exception for {subject} is stale: it has {actual}, within the limit of {limit}; remove the entry")
 	elif actual > entry["ceiling"]:
@@ -83,6 +95,7 @@ def judge(kind: str, subject: str, actual: int, limit: int, exceptions: dict) ->
 def main(argv: list) -> int:
 	parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 	parser.add_argument("--exceptions", required=True)
+	parser.add_argument("--growth-only", action="store_true", help="report only growth past the limit or the ceiling")
 	args = parser.parse_args(argv)
 	try:
 		with open(args.exceptions, encoding="utf-8") as fh:
@@ -99,13 +112,13 @@ def main(argv: list) -> int:
 	present = set(paths)
 	for path in sorted(paths):
 		if PurePosixPath(path).suffix in COMMENT_PREFIXES:
-			findings += judge("file", path, code_lines(path), MAX_FILE, file_exc)
+			findings += judge("file", path, code_lines(path), MAX_FILE, file_exc, args.growth_only)
 	sizes = folder_sizes(paths)
 	for folder in sorted(sizes):
-		findings += judge("folder", folder, sizes[folder], MAX_FOLDER, folder_exc)
-	for name in sorted(set(file_exc) - present):
+		findings += judge("folder", folder, sizes[folder], MAX_FOLDER, folder_exc, args.growth_only)
+	for name in sorted(set(file_exc) - present if not args.growth_only else ()):
 		findings.append(f"the exception for {name} names a file that is not tracked; remove the entry")
-	for name in sorted(set(folder_exc) - set(sizes)):
+	for name in sorted(set(folder_exc) - set(sizes) if not args.growth_only else ()):
 		findings.append(f"the exception for {name} names a folder with no tracked files; remove the entry")
 
 	for finding in findings:

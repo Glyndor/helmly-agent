@@ -15,6 +15,7 @@
     "shell": [
       "setup-agent.sh",
       "update-agent.sh",
+      "internal/update/mod.rs",
       "tests/**",
       ".github/scripts/**",
       ".github/workflows/**",

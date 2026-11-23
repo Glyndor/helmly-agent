@@ -71,7 +71,9 @@ def check_triggers(findings: list) -> None:
 	steps = guard.get("steps") or [{}]
 	env = steps[-1].get("env") or {}
 	run = str(steps[-1].get("run", ""))
-	if env.get("HEAD_REPO") != "${{ github.event.pull_request.head.repo.full_name }}" or env.get("THIS_REPO") != "${{ github.repository }}" or '"$HEAD_REPO" != "$THIS_REPO"' not in run:
+	pinned_env = {"HEAD_REF": "${{ github.head_ref }}", "HEAD_REPO": "${{ github.event.pull_request.head.repo.full_name }}", "THIS_REPO": "${{ github.repository }}"}
+	condition = 'if [ "$HEAD_REF" != "develop" ] || [ "$HEAD_REPO" != "$THIS_REPO" ]; then'
+	if env != pinned_env or [line.strip() for line in run.splitlines()].count(condition) != 1 or len(steps) != 1:
 		findings.append("main-guard.yml: develop-only must compare the head repository with this repository, since a fork can have a branch called develop")
 
 
@@ -129,6 +131,7 @@ GATE_RESULTS = {
 	"RUST": "rust",
 	"AUDIT": "audit",
 	"STRUCTURE": "structure",
+	"PINS": "pins",
 }
 
 
@@ -192,7 +195,7 @@ def check_shape(findings: list) -> None:
 		findings.append("ci.yml: the structure job must wait for the three cheap gates and have no plan of its own")
 	step = (structure.get("steps") or [{}, {}])[-1]
 	run = str(step.get("run", ""))
-	for needle in ('git show "$BASE_SHA:.github/scripts/ci/structure.py"', 'git show "$BASE_SHA:.github/structure.json"', 'python3 .github/scripts/ci/structure.py --exceptions .github/structure.json || bad=1', 'python3 "$tmp/structure.py" --exceptions "$tmp/structure.json" || bad=1'):
+	for needle in ('git show "$BASE_SHA:.github/scripts/ci/structure.py"', 'git show "$BASE_SHA:.github/structure.json"', 'python3 .github/scripts/ci/structure.py --exceptions .github/structure.json || bad=1', 'python3 "$tmp/structure.py" $growth --exceptions "$tmp/structure.json" || bad=1', 'growth="--growth-only"'):
 		if needle not in run:
 			findings.append(f"ci.yml: the structure step must judge with both copies, and is missing: {needle}")
 	steps = jobs.get("decide", {}).get("steps") or []

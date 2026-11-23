@@ -231,16 +231,71 @@ jobs:
           tmp="$RUNNER_TEMP/structure"
           mkdir -p "$tmp"
           if [ "$EVENT" = pull_request ]; then
-            if git show "$BASE_SHA:.github/scripts/ci/structure.py" > "$tmp/structure.py" 2>/dev/null \
-              && git show "$BASE_SHA:.github/structure.json" > "$tmp/structure.json" 2>/dev/null; then
+            # A commit that cannot be read is a failure; only a readable commit
+            # without the files is one that has no check yet.
+            git cat-file -e "$BASE_SHA^{commit}" || { echo "::error::the base commit cannot be read"; exit 1; }
+            listing="$(git ls-tree "$BASE_SHA" -- .github/scripts/ci/structure.py .github/structure.json)" || { echo "::error::the base commit cannot be listed"; exit 1; }
+            if [ -n "$listing" ]; then
+              git show "$BASE_SHA:.github/scripts/ci/structure.py" > "$tmp/structure.py" || { echo "::error::the base copy of the script cannot be read"; exit 1; }
+              git show "$BASE_SHA:.github/structure.json" > "$tmp/structure.json" || { echo "::error::the base copy of the exceptions cannot be read"; exit 1; }
               echo "== judged with the base commit's script and exceptions"
-              python3 "$tmp/structure.py" --exceptions "$tmp/structure.json" || bad=1
+              # Only growth counts against the base's numbers: the list itself is the
+              # tree's copy to keep tidy. A base whose script does not know the option
+              # yet judges strictly, as it always did.
+              growth=""
+              if grep -q -e '--growth-only' "$tmp/structure.py"; then growth="--growth-only"; fi
+              python3 "$tmp/structure.py" $growth --exceptions "$tmp/structure.json" || bad=1
             else
               echo "::notice::the base commit has no structure check yet; this change introduces it"
             fi
           fi
           echo "== judged with this tree's script and exceptions"
           python3 .github/scripts/ci/structure.py --exceptions .github/structure.json || bad=1
+          exit "$bad"
+
+  # The contract of the wiring tests does not compare the value of a pin, so that the
+  # pull requests of Dependabot (a SHA and its version comment, together) can pass. This
+  # job gives the value a judge of its own, on every pull request and push, whatever
+  # changed: every action is from an allowed owner, pinned to the commit its version
+  # tag points at, one pair per repository, and no lower than the base's. The script
+  # of the base commit runs first, with nothing of this tree executed before it, then
+  # this tree's copy.
+  pins:
+    needs: [dco, workflow-lint, shell]
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (needs.dco.result != 'failure' && needs.workflow-lint.result != 'failure' && needs.shell.result != 'failure')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Judge the pins with the base copy of the script, then with this tree's
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -uo pipefail
+          bad=0
+          tmp="$(mktemp -d "$RUNNER_TEMP/pins.XXXXXX")"
+          if [ "$EVENT" = pull_request ]; then
+            # Readable commit first, and only then is a missing file an absent one.
+            git cat-file -e "$BASE_SHA^{commit}" || { echo "::error::the base commit cannot be read"; exit 1; }
+            listing="$(git ls-tree "$BASE_SHA" -- .github/scripts/ci/pins.py)" || { echo "::error::the base commit cannot be listed"; exit 1; }
+            if [ -z "$listing" ]; then
+              echo "::notice::the base commit has no pins check yet; this change introduces it"
+            else
+              git show "$BASE_SHA:.github/scripts/ci/pins.py" > "$tmp/pins.py" || { echo "::error::the base copy of the script cannot be read"; exit 1; }
+              echo "== judged with the base commit's script"
+              python3 -I "$tmp/pins.py" --base "$BASE_SHA" || bad=1
+            fi
+            echo "== judged with this tree's script"
+            python3 -I .github/scripts/ci/pins.py --base "$BASE_SHA" || bad=1
+          else
+            echo "== judged with this tree's script"
+            python3 -I .github/scripts/ci/pins.py || bad=1
+          fi
           exit "$bad"
 
   # The one check the rulesets require, besides the DCO check. GitHub counts a
@@ -267,7 +322,7 @@ jobs:
     # does not, is what limits the bases, and the gate checks the base in the shell
     # as well before it approves under either name.
     name: ${{ github.event_name == 'pull_request' && (github.event.pull_request.base.ref == 'develop' && 'ci-gate' || (github.event.pull_request.base.ref == 'main' && 'ci-gate (main)' || 'ci-gate (other base)')) || format('ci-gate ({0})', github.event_name) }}
-    needs: [decide, dco, workflow-lint, shell, rust, audit, structure]
+    needs: [decide, dco, workflow-lint, shell, rust, audit, structure, pins]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -281,6 +336,7 @@ jobs:
       RUST: ${{ needs.rust.result }}
       AUDIT: ${{ needs.audit.result }}
       STRUCTURE: ${{ needs.structure.result }}
+      PINS: ${{ needs.pins.result }}
       PLAN_WORKFLOWS: ${{ needs.decide.outputs.workflows }}
       PLAN_SHELL: ${{ needs.decide.outputs.shell }}
       PLAN_RUST: ${{ needs.decide.outputs.rust }}
@@ -308,11 +364,12 @@ jobs:
           suite rust "$RUST" "$PLAN_RUST"
           [ "$AUDIT" = success ] || fail "audit ended '$AUDIT' and has no plan to excuse it"
           [ "$STRUCTURE" = success ] || fail "structure ended '$STRUCTURE' and has no plan to excuse it"
+          [ "$PINS" = success ] || fail "pins ended '$PINS' and has no plan to excuse it"
           if [ "$EVENT" = pull_request ]; then
             [ "$DCO" = success ] || fail "dco ended '$DCO'"
           fi
           printf '%-14s %-10s %s\n' job result plan
-          printf '%-14s %-10s %s\n' decide "$DECIDE" - dco "$DCO" - audit "$AUDIT" - structure "$STRUCTURE" - \
+          printf '%-14s %-10s %s\n' decide "$DECIDE" - dco "$DCO" - audit "$AUDIT" - structure "$STRUCTURE" - pins "$PINS" - \
             workflow-lint "$WORKFLOW_LINT" "${PLAN_WORKFLOWS:-empty}" shell "$SHELL_SUITE" "${PLAN_SHELL:-empty}" \
             rust "$RUST" "${PLAN_RUST:-empty}"
           [ "$bad" -eq 0 ] && echo "every suite passed or had nothing to check"

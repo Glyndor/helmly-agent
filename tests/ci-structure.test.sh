@@ -117,10 +117,10 @@ pr_repo() {
 }
 # judge <name> <event>: exit code of the step with HEAD as the pull request
 judge() {
-	local rc=0
+	local rc=0 base="${3:-}"
 	git -C "$WORK/$1" add -A
 	git -C "$WORK/$1" -c user.email=t@example.invalid -c user.name=t commit -q --allow-empty -m change
-	(cd "$WORK/$1" && env RUNNER_TEMP="$WORK/tmp-$1" EVENT="$2" BASE_SHA="$(git rev-parse HEAD~1)" bash "$WORK/step.sh" > "$WORK/$1.out" 2>&1) || rc=$?
+	(cd "$WORK/$1" && env RUNNER_TEMP="$WORK/tmp-$1" EVENT="$2" BASE_SHA="${base:-$(git rev-parse HEAD~1)}" bash "$WORK/step.sh" > "$WORK/$1.out" 2>&1) || rc=$?
 	echo "$rc"
 }
 
@@ -183,5 +183,55 @@ check "and with no base copy its own copy still turns a long file red" "1" "$(ju
 pr_repo n
 lines 501 "$WORK/n/big.sh"
 check "on a push the tree's copy judges alone and a long file is red" "1" "$(judge n push)"
+
+# --- a change to an exception is judged against the base's number, not its own -----------
+# A folder the base does not list is judged with the default of the base, 20.
+pr_repo o
+for n in $(seq 21); do : > "$WORK/o/doc$n.md"; done
+echo '{"files": {}, "folders": {".": {"ceiling": 21, "reason": "added by the same change"}}}' > "$WORK/o/.github/structure.json"
+check "a new folder past 20 files that lists itself is red: the base's default judges it" "1" "$(judge o pull_request)"
+grep -q 'folder . has 21' "$WORK/o.out" && r=found || r=missing
+check "and it is the base's copy that says so" "found" "$r"
+
+# A folder the base lists at 25 cannot take a sixth file by raising its own ceiling.
+pr_repo p
+mkdir "$WORK/p/dir"
+for n in $(seq 25); do : > "$WORK/p/dir/doc$n.md"; done
+echo '{"files": {}, "folders": {"dir": {"ceiling": 25, "reason": "the base allows 25"}}}' > "$WORK/p/.github/structure.json"
+git -C "$WORK/p" add -A
+git -C "$WORK/p" -c user.email=t@example.invalid -c user.name=t commit -q -m "base with a folder exception"
+for n in 26 27 28; do : > "$WORK/p/dir/doc$n.md"; done
+echo '{"files": {}, "folders": {"dir": {"ceiling": 28, "reason": "raised by the same change"}}}' > "$WORK/p/.github/structure.json"
+check "a listed folder that raises its own ceiling and grows is red" "1" "$(judge p pull_request)"
+grep -q 'folder dir has 28, over its ceiling of 25' "$WORK/p.out" && r=found || r=missing
+check "and the finding names the ceiling of the base" "found" "$r"
+
+# A file the base lists at 600 lines: the change that makes it shorter, and lowers its own
+# ceiling to match, is the change the exceptions exist to ask for, and must not be red.
+pr_repo q
+lines 600 "$WORK/q/big.sh"
+echo '{"files": {"big.sh": {"ceiling": 600, "reason": "the installer"}}, "folders": {}}' > "$WORK/q/.github/structure.json"
+git -C "$WORK/q" add -A
+git -C "$WORK/q" -c user.email=t@example.invalid -c user.name=t commit -q -m "base with an exception"
+lines 540 "$WORK/q/big.sh"
+echo '{"files": {"big.sh": {"ceiling": 540, "reason": "the installer"}}, "folders": {}}' > "$WORK/q/.github/structure.json"
+check "a file that shrinks by 60 lines and lowers its ceiling is green" "0" "$(judge q pull_request)"
+
+pr_repo r
+lines 600 "$WORK/r/big.sh"
+echo '{"files": {"big.sh": {"ceiling": 600, "reason": "the installer"}}, "folders": {}}' > "$WORK/r/.github/structure.json"
+git -C "$WORK/r" add -A
+git -C "$WORK/r" -c user.email=t@example.invalid -c user.name=t commit -q -m "base with an exception"
+lines 480 "$WORK/r/big.sh"
+echo '{"files": {}, "folders": {}}' > "$WORK/r/.github/structure.json"
+check "a file that shrinks under the limit and drops its exception is green" "0" "$(judge r pull_request)"
+
+# A base commit that cannot be read is not a base without the check: the step fails, and
+# runs nothing, instead of judging with the tree's copy alone.
+pr_repo s
+lines 10 "$WORK/s/ok.sh"
+check "a base commit that cannot be read is red, not 'no check yet'" "1" "$(judge s pull_request 0000000000000000000000000000000000000000)"
+grep -q 'cannot be read' "$WORK/s.out" && r=said || r=silent
+check "and the step says the base commit cannot be read" "said" "$r"
 
 exit "$fail"
