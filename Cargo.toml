@@ -56,7 +56,7 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v7", "serde"] }
 
 # system interaction
-nix = { version = "0.31", features = ["process", "signal", "fs"] }
+nix = { version = "0.32", features = ["process", "signal", "fs"] }
 
 
 [dev-dependencies]
