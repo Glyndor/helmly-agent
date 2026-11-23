@@ -114,3 +114,4 @@ fn make_cmd(permission: PermissionLevel, command: Value) -> VerifiedCommand {
 
 mod permission_gates;
 mod required_fields;
+mod reserved_ports;

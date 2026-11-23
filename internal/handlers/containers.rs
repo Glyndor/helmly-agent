@@ -41,8 +41,15 @@ pub async fn handle_container_deploy(
 	// requires validation *before* the file lands on disk and is
 	// exec'd by `podman compose up -d`. Rejection here means the
 	// payload never reaches the podman CLI.
-	let project_dir = format!("/var/lib/glyndor/helmly/tenants/{tenant_id}/{project_id}");
-	if let Err(e) = super::validate::validate_compose(&compose_yaml, project_dir.as_str()) {
+	// The validator confines bind sources to the directory the compose file
+	// is written to and run from, so both come from `podman::project_dir`.
+	let project_dir = podman::project_dir(&tenant_id, &project_id);
+	let reserved_ports = reserved_host_ports(state);
+	let policy = super::validate::ComposePolicy {
+		project_dir: std::path::Path::new(&project_dir),
+		reserved_ports: &reserved_ports,
+	};
+	if let Err(e) = super::validate::validate_compose(&compose_yaml, &policy) {
 		// Log the detailed reason server-side; don't leak host/port details
 		// to the caller (an attacker probing for valid tenant dirs could
 		// otherwise distinguish allowed from disallowed by the response shape).
@@ -75,6 +82,21 @@ pub async fn handle_container_deploy(
 	.map_err(|e| AgentError::Internal(anyhow::anyhow!(e)))?;
 
 	Ok(json!({ "ok": true }))
+}
+
+/// Host ports helmly-agent listens on or opens for itself: the command and health
+/// listener, WireGuard, the setup port and, on the dashboard host, the panel.
+fn reserved_host_ports(state: &AppState) -> Vec<u16> {
+	let listen = state
+		.config
+		.listen_addr
+		.rsplit_once(':')
+		.and_then(|(_, port)| port.parse::<u16>().ok())
+		// An address the listener could not have bound to reserves the default.
+		.unwrap_or(9090);
+	let mut ports = vec![listen, state.nft_wg_port(), super::nginx_cmd::SETUP_PORT];
+	ports.extend(state.config.dashboard_port);
+	ports
 }
 
 pub fn handle_container_start(cmd: &VerifiedCommand) -> std::result::Result<Value, AgentError> {
