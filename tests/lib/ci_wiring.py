@@ -16,7 +16,9 @@ What it holds in place:
 3. Every job of a reusable workflow that takes the `run` input carries
    `inputs.run != 'false'` in its `if`, so a `false` verdict skips all of it and
    a missing verdict (the empty string) skips none of it.
-4. The two inputs that can turn a required job off by being emptied are not
+4. `ci-gate`, the one check the rulesets require besides DCO, runs always and
+   needs every other job of ci.yml.
+5. The two inputs that can turn a required job off by being emptied are not
    empty in ci.yml: `test-command` of the shell suite and `coverage-threshold`
    of the Rust suite. A skipped required check reports success.
 """
@@ -113,12 +115,30 @@ def check_switches(findings: list) -> None:
 		findings.append("ci.yml: the Rust suite is called without a positive coverage-threshold, so rust / Coverage would skip and report success")
 
 
+def check_gate(findings: list) -> None:
+	"""`ci-gate` runs always and sees every other job of ci.yml."""
+	jobs = load_yaml(WORKFLOWS / "ci.yml")["jobs"]
+	gate = jobs.get("ci-gate")
+	if gate is None:
+		findings.append("ci.yml has no ci-gate job")
+		return
+	if str(gate.get("if", "")).replace(" ", "") != "${{always()}}":
+		findings.append("ci.yml: ci-gate must run `if: ${{ always() }}`, or a skipped gate reports success")
+	needs = set(gate.get("needs") or [])
+	for job_id in jobs:
+		if job_id in ("ci-gate", "halt"):
+			continue
+		if job_id not in needs:
+			findings.append(f"ci.yml: ci-gate does not need {job_id!r}, so its result is not judged")
+
+
 def main() -> int:
 	findings: list = []
 	try:
 		check_required(findings)
 		check_suites_consumed(findings)
 		check_reusables_honour_run(findings)
+		check_gate(findings)
 		check_switches(findings)
 	except (OSError, ValueError, KeyError, yaml.YAMLError) as exc:
 		print(f"cannot read the workflows: {exc!r}")

@@ -57,9 +57,24 @@ check "a source file runs the Rust suite only" "rust" "$(decide "$MAP" internal/
 check "a migration runs the Rust suite only" "rust" "$(decide "$MAP" migrations/009_rename_nftables_chains.sql)"
 check "the installer runs the shell suite only" "shell" "$(decide "$MAP" setup-agent.sh)"
 check "a shell test runs the shell suite only" "shell" "$(decide "$MAP" tests/run.sh)"
-check "a workflow file runs only the workflow lint" "workflows" "$(decide "$MAP" .github/workflows/release.yml)"
+check "a workflow file runs the workflow lint and the shell suite, which holds the wiring tests" "shell workflows" "$(decide "$MAP" .github/workflows/release.yml)"
 check "the audit policy runs only the audit" "audit" "$(decide "$MAP" deny.toml)"
 check "the lockfile runs the audit and the Rust suite" "audit rust" "$(decide "$MAP" Cargo.lock)"
+
+# --- what watches the CI cannot be left unwatched ---------------------------------
+# The wiring tests live in the shell suite. Every path that can change what the
+# workflows or the rulesets say must run that suite (directly or by rerunning
+# everything), or a change to the CI is merged with the test that guards it unrun.
+for path in .github/workflows/release.yml .github/workflows/codeql.yml .github/workflows/freshness.yml \
+	.github/workflows/reusable-rust-ci.yml .github/workflows/ci.yml .github/ci-map.json .github/required-checks.json \
+	.github/scripts/ci/decide.py .github/scripts/ci/cancel/others.sh .github/actions/cargo-audit/action.yml \
+	tests/lib/ci_wiring.py tests/ci-wiring.test.sh; do
+	case " $(decide "$MAP" "$path") " in
+		*" shell "*) r=runs-the-shell-suite ;;
+		*) r="does-not-run-the-shell-suite" ;;
+	esac
+	check "a change to $path runs the shell suite, where the wiring tests are" "runs-the-shell-suite" "$r"
+done
 
 # --- nothing to check ------------------------------------------------------------
 check "the README runs nothing" "" "$(decide "$MAP" README.md)"

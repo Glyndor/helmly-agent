@@ -13,10 +13,11 @@
     "shell": [
       "setup-agent.sh",
       "update-agent.sh",
-      ".github/scripts/**",
-      ".github/required-checks.json",
       "tests/**",
-      ".github/workflows/reusable-shell-ci.yml"
+      ".github/scripts/**",
+      ".github/workflows/**",
+      ".github/actions/**",
+      ".github/required-checks.json"
     ],
     "audit": [
       "Cargo.toml",

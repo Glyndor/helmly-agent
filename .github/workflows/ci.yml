@@ -18,11 +18,14 @@ name: CI
 # a documentation change runs no suite, and a change to one workflow file runs
 # only the workflow lint.
 #
-# The required checks always report. A suite that is not needed does not leave
-# its jobs out: the jobs are there and skipped, and a skipped job reports
-# success, so a pull request is never left waiting for a check that did not
-# start. Each decision FAILS OPEN: if `decide` fails or cannot read the diff,
-# its outputs are empty, an empty output is not `false`, and every suite runs.
+# The check the rulesets require is `ci-gate`, one job that always runs. A
+# suite that is not needed does not leave its jobs out: they are there and
+# skipped. GitHub counts a skipped required check as passed, so no suite is
+# required by its own name; `ci-gate` fails unless the plan succeeded and each
+# suite succeeded or was skipped because the plan said it had nothing to check.
+# Each decision FAILS OPEN: if `decide` cannot read the diff it answers
+# `true` for every suite, and if it fails outright its outputs are empty, an
+# empty output is not `false`, every suite runs, and `ci-gate` is red.
 #
 
 on:
@@ -160,3 +163,54 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/cargo-audit
+
+  # The one check the rulesets require, besides the DCO check. GitHub counts a
+  # required check that was skipped as passed, so no suite is required by its
+  # own name: this job runs always and fails unless the plan was made and every
+  # suite either succeeded or was skipped BECAUSE the plan said it had nothing
+  # to look at. A suite skipped for any other reason (a gate before it failed,
+  # the plan failed or came back empty) is a failure here, and so is a job that
+  # was cancelled. The text is in this file and not in a script of the checkout,
+  # so a pull request cannot rewrite the judge of its own checks (the wiring
+  # test holds the rest of this in place).
+  ci-gate:
+    name: ci-gate
+    needs: [decide, dco, workflow-lint, shell, rust, audit]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      EVENT: ${{ github.event_name }}
+      DECIDE: ${{ needs.decide.result }}
+      DCO: ${{ needs.dco.result }}
+      WORKFLOW_LINT: ${{ needs.workflow-lint.result }}
+      SHELL_SUITE: ${{ needs.shell.result }}
+      RUST: ${{ needs.rust.result }}
+      AUDIT: ${{ needs.audit.result }}
+      PLAN_WORKFLOWS: ${{ needs.decide.outputs.workflows }}
+      PLAN_SHELL: ${{ needs.decide.outputs.shell }}
+      PLAN_RUST: ${{ needs.decide.outputs.rust }}
+      PLAN_AUDIT: ${{ needs.decide.outputs.audit }}
+    steps:
+      - name: Every suite passed, or the plan said it had nothing to check
+        run: |
+          set -uo pipefail
+          bad=0
+          fail() { echo "::error::$1"; bad=1; }
+          [ "$DECIDE" = success ] || fail "the plan job ended '$DECIDE', so no skipped suite can be trusted"
+          suite() { # suite <name> <result> <plan>
+            case "$2" in
+              success) ;;
+              skipped) [ "$3" = false ] || fail "$1 was skipped but the plan did not say it could be (plan: '${3:-empty}')" ;;
+              *) fail "$1 ended '$2'" ;;
+            esac
+          }
+          suite workflow-lint "$WORKFLOW_LINT" "$PLAN_WORKFLOWS"
+          suite shell "$SHELL_SUITE" "$PLAN_SHELL"
+          suite rust "$RUST" "$PLAN_RUST"
+          suite audit "$AUDIT" "$PLAN_AUDIT"
+          if [ "$EVENT" = pull_request ]; then
+            [ "$DCO" = success ] || fail "dco ended '$DCO'"
+          fi
+          [ "$bad" -eq 0 ] && echo "every suite passed or had nothing to check"
+          exit "$bad"

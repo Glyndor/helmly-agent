@@ -46,9 +46,18 @@ fresh_copy
 check "the real workflows satisfy every rule" "none" "$(finding)"
 
 fresh_copy
-sed -i 's/^  workflow-lint:$/  lint-workflows:/' "$WORK/tree/.github/workflows/ci.yml"
+sed -i 's/^    name: ci-gate$/    name: gate/' "$WORK/tree/.github/workflows/ci.yml"
 check "renaming a job a ruleset requires is caught" \
-	"required check on develop is emitted by no workflow: 'workflow-lint / workflow-lint'" "$(finding)"
+	"required check on develop is emitted by no workflow: 'ci-gate'" "$(finding)"
+
+fresh_copy
+sed -i "s/^    if: \${{ always() }}$/    if: \${{ success() }}/" "$WORK/tree/.github/workflows/ci.yml"
+check "a ci-gate that does not run always is caught" \
+	"ci.yml: ci-gate must run \`if: \${{ always() }}\`, or a skipped gate reports success" "$(finding)"
+
+fresh_copy
+sed -i 's/^    needs: \[decide, dco, workflow-lint, shell, rust, audit\]$/    needs: [decide, dco, workflow-lint, shell, rust]/' "$WORK/tree/.github/workflows/ci.yml"
+check "a job that ci-gate no longer judges is caught" "ci.yml: ci-gate does not need 'audit', so its result is not judged" "$(finding)"
 
 fresh_copy
 sed -i 's/needs\.decide\.outputs\.audit/needs.decide.outputs.nothing/' "$WORK/tree/.github/workflows/ci.yml"
@@ -82,6 +91,6 @@ check "a zero coverage threshold, which would skip a required check, is caught" 
 fresh_copy
 sed -i 's/^  pull_request:$/  pull_request_target:/' "$WORK/tree/.github/workflows/ci.yml"
 out="$(finding)"
-check "a ci.yml that no longer runs on pull requests loses its checks" "required check on develop is emitted by no workflow: 'rust / Format & lint'" "$out"
+check "a ci.yml that no longer runs on pull requests loses its checks" "required check on develop is emitted by no workflow: 'ci-gate'" "$out"
 
 exit "$fail"
