@@ -16,11 +16,20 @@ What it holds in place:
 3. Every job of a reusable workflow that takes the `run` input carries
    `inputs.run != 'false'` in its `if`, so a `false` verdict skips all of it and
    a missing verdict (the empty string) skips none of it.
-4. `ci-gate`, the one check the rulesets require besides DCO, runs always and
-   needs every other job of ci.yml.
-5. The two inputs that can turn a required job off by being emptied are not
-   empty in ci.yml: `test-command` of the shell suite and `coverage-threshold`
-   of the Rust suite. A skipped required check reports success.
+4. `ci-gate`, the check a pull request must pass besides DCO, runs always,
+   needs every other job of ci.yml, and carries the event in its name unless the
+   event is a pull request. Each required check is produced by one workflow on
+   one event: the push run of develop and the promotion pull request into main
+   share a commit, and a gate named alike would let the first satisfy the second.
+5. The workflows are read with a real YAML parser that refuses a key twice
+   (GitHub keeps the last of two and says nothing), through one enumerator that
+   lists `.yml` and `.yaml` at any depth, and composite actions are listed the
+   same way. A workflow below `.github/workflows` is a finding: GitHub never
+   runs it. A security tool is never restored from a cache.
+6. The exact shape of how ci.yml feeds each suite and how ci-gate reads it back,
+   the closed list of inputs each reusable workflow takes, and the lines of the
+   plan step that name the script or the map, which a pull request must read
+   from its base commit.
 """
 
 import json
@@ -34,54 +43,153 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 
 
+class StrictLoader(yaml.SafeLoader):
+	"""A safe YAML loader that refuses a mapping with the same key twice.
+
+	GitHub keeps the last of two equal keys and says nothing, so a reader that
+	keeps the first (or a regular expression that sees both) validates a file
+	other than the one that runs.
+	"""
+
+
+def _no_duplicate_keys(loader: StrictLoader, node: yaml.MappingNode, deep: bool = False) -> dict:
+	seen = set()
+	for key_node, _ in node.value:
+		key = loader.construct_object(key_node, deep=deep)
+		if key in seen:
+			raise ValueError(f"duplicate key {key!r} at line {key_node.start_mark.line + 1}")
+		seen.add(key)
+	return yaml.SafeLoader.construct_mapping(loader, node, deep)
+
+
+StrictLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _no_duplicate_keys)
+
+
+def workflow_files() -> list:
+	"""Every workflow file, with both suffixes and at any depth.
+
+	GitHub runs only the top level of .github/workflows, so a file deeper down
+	is reported by check_layout. The one enumerator, so that what the validator
+	compares is what GitHub could run: a file this does not list is never checked.
+	"""
+	return sorted(p for p in WORKFLOWS.rglob("*") if p.is_file() and p.suffix in (".yml", ".yaml"))
+
+
+def action_files() -> list:
+	return sorted(p for p in (ROOT / ".github").rglob("action.y*ml") if p.is_file() and p.name in ("action.yml", "action.yaml"))
+
+
 def load_yaml(path: Path) -> dict:
 	with open(path, encoding="utf-8") as fh:
-		data = yaml.safe_load(fh)
+		data = yaml.load(fh, Loader=StrictLoader)  # noqa: S506 (a safe subclass)
 	if not isinstance(data, dict):
 		raise ValueError(f"{path} is not a mapping")
 	return data
 
 
-def emitted_checks() -> set:
-	"""Names that workflows run on a pull request emit, as a ruleset spells them.
+PR_ONLY = "${{ github.event_name == 'pull_request' }}"
+EVENT_NAME = re.compile(r"^\$\{\{ github\.event_name == 'pull_request' && '([^']+)' \|\| format\('([^']*)\{0\}([^']*)', github\.event_name\) \}\}$")
 
-	Only workflows with a pull_request trigger count: a job of the weekly audit
-	is also called `audit` and must not satisfy the ruleset for the pull request
-	one. A reusable workflow counts only through the job that calls it.
+
+def triggers(doc: dict) -> set:
+	"""The events a workflow runs on. YAML 1.1 reads the key `on` as the boolean True."""
+	on = doc.get("on", doc.get(True)) or {}
+	if isinstance(on, str):
+		return {on}
+	return set(on)
+
+
+def job_name(job_id: str, job: dict, event: str) -> str:
+	"""The name a job's check carries for an event. Knows the one expression ci.yml uses."""
+	raw = str(job.get("name", job_id))
+	match = EVENT_NAME.match(raw)
+	if match:
+		return match.group(1) if event == "pull_request" else f"{match.group(2)}{event}{match.group(3)}"
+	return raw
+
+
+def producers() -> dict:
+	"""Check name -> the set of (workflow file, event) that produce it.
+
+	A job with `if: github.event_name == 'pull_request'` produces on that event
+	only. A reusable workflow counts through the job that calls it. Reusable and
+	composite files themselves produce nothing: they run only when called.
 	"""
-	names = set()
-	for path in sorted(WORKFLOWS.glob("*.yml")):
+	found: dict = {}
+	for path in workflow_files():
 		doc = load_yaml(path)
-		# YAML 1.1 reads the key `on` as the boolean True.
-		trigger = doc.get("on", doc.get(True)) or {}
-		if "pull_request" not in trigger:
-			continue
-		jobs = doc.get("jobs") or {}
-		for job_id, job in jobs.items():
-			caller = job.get("name", job_id)
-			uses = job.get("uses", "")
-			if uses.startswith("./.github/workflows/"):
-				inner = load_yaml(ROOT / uses[2:]).get("jobs") or {}
-				for inner_id, inner_job in inner.items():
-					names.add(f"{caller} / {inner_job.get('name', inner_id)}")
-			else:
-				names.add(str(caller))
-	return names
+		for event in sorted(triggers(doc) - {"workflow_call"}):
+			for job_id, job in (doc.get("jobs") or {}).items():
+				if str(job.get("if", "")).strip() == PR_ONLY and event != "pull_request":
+					continue
+				caller = job_name(job_id, job, event)
+				uses = str(job.get("uses", ""))
+				if uses.startswith("./.github/workflows/"):
+					inner = load_yaml(ROOT / uses[2:]).get("jobs") or {}
+					names = [f"{caller} / {inner_job.get('name', inner_id)}" for inner_id, inner_job in inner.items()]
+				else:
+					names = [caller]
+				for name in names:
+					found.setdefault(name, set()).add((path.name, event))
+	return found
 
 
 def check_required(findings: list) -> None:
+	"""Each required check is produced by exactly one workflow on exactly one event.
+
+	A name two events share lets the result of one satisfy the requirement of the
+	other: the push run of develop carries the same commit as the promotion pull
+	request into main, and its plan looked at the diff of that push only.
+	"""
 	required = json.loads((ROOT / ".github" / "required-checks.json").read_text(encoding="utf-8"))
-	emitted = emitted_checks()
+	made = producers()
 	for branch, names in required.items():
 		for name in names:
-			if name not in emitted:
+			who = made.get(name, set())
+			if not any(event == "pull_request" for _, event in who):
 				findings.append(f"required check on {branch} is emitted by no workflow: {name!r}")
+			elif len(who) > 1:
+				findings.append(f"required check {name!r} on {branch} is produced by more than one workflow or event: {sorted(who)}")
+
+
+def check_layout(findings: list) -> None:
+	"""GitHub runs only the top level of .github/workflows, and only workflows with a trigger."""
+	for path in workflow_files():
+		if path.parent != WORKFLOWS:
+			findings.append(f"{path.relative_to(ROOT)}: GitHub never runs a workflow below .github/workflows, and a validator would compare it as if it ran")
+	for path in action_files():
+		doc = load_yaml(path)
+		for step in (doc.get("runs") or {}).get("steps") or []:
+			if str(step.get("uses", "")).startswith("actions/cache"):
+				findings.append(f"{path.relative_to(ROOT)}: a security tool is downloaded and checked on every run, never restored from a cache")
+	for path in workflow_files():
+		doc = load_yaml(path)
+		for job_id, job in (doc.get("jobs") or {}).items():
+			is_audit = job_id == "audit" or any(
+				str(step.get("uses", "")) == "./.github/actions/cargo-audit" for step in job.get("steps") or []
+			)
+			if is_audit and any(str(step.get("uses", "")).startswith("actions/cache") for step in job.get("steps") or []):
+				findings.append(f"{path.name}: job {job_id!r} restores a cache next to a security tool")
+
+
+def strings(node: object):
+	"""Every string of a parsed document, keys and values."""
+	if isinstance(node, str):
+		yield node
+	elif isinstance(node, dict):
+		for key, value in node.items():
+			yield from strings(key)
+			yield from strings(value)
+	elif isinstance(node, list):
+		for item in node:
+			yield from strings(item)
 
 
 def check_suites_consumed(findings: list) -> None:
 	cmap = json.loads((ROOT / ".github" / "ci-map.json").read_text(encoding="utf-8"))
-	text = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
-	used = set(re.findall(r"needs\.decide\.outputs\.([a-z][a-z0-9-]*)", text))
+	used = set()
+	for text in strings(load_yaml(WORKFLOWS / "ci.yml")):
+		used.update(re.findall(r"needs\.decide\.outputs\.([a-z][a-z0-9-]*)", text))
 	declared = set(load_yaml(WORKFLOWS / "ci.yml")["jobs"]["decide"].get("outputs", {}))
 	for suite in cmap["suites"]:
 		if suite not in used:
@@ -94,7 +202,9 @@ def check_suites_consumed(findings: list) -> None:
 
 
 def check_reusables_honour_run(findings: list) -> None:
-	for path in sorted(WORKFLOWS.glob("reusable-*.yml")):
+	for path in workflow_files():
+		if not path.name.startswith("reusable-"):
+			continue
 		doc = load_yaml(path)
 		# YAML 1.1 reads the key `on` as the boolean True.
 		trigger = doc.get("on", doc.get(True)) or {}
@@ -201,6 +311,9 @@ def check_shape(findings: list) -> None:
 	for line in DECIDE_PATH_LINES:
 		if lines.count(line) != 1:
 			findings.append(f"ci.yml: the plan step must contain exactly once: {line}")
+	plan_env = (steps[-1].get("env") or {}) if steps else {}
+	if lines.count('if [ "$BASE_REF" = main ]; then') != 1 or plan_env.get("BASE_REF") != "${{ github.event.pull_request.base.ref }}":
+		findings.append("ci.yml: the plan step must answer `true` for every suite when the pull request's base is main")
 	try:
 		push_branch = lines.index('elif [ "$EVENT" = push ]; then')
 		end = lines.index("else", push_branch)
@@ -215,12 +328,11 @@ def check_shape(findings: list) -> None:
 	cmap = json.loads((ROOT / ".github" / "ci-map.json").read_text(encoding="utf-8"))
 	if printed != set(cmap["suites"]):
 		findings.append(f"ci.yml: the fallback of the plan step answers for {sorted(printed)} and the map has {sorted(cmap['suites'])}")
-
-
 def main() -> int:
 	findings: list = []
 	try:
 		check_required(findings)
+		check_layout(findings)
 		check_suites_consumed(findings)
 		check_reusables_honour_run(findings)
 		check_gate(findings)

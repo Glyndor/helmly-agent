@@ -64,6 +64,7 @@ jobs:
         id: decide
         env:
           EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BEFORE_SHA: ${{ github.event.before }}
@@ -83,6 +84,9 @@ jobs:
           tmp="$RUNNER_TEMP/decide"
           mkdir -p "$tmp"
           if [ "$EVENT" = pull_request ]; then
+            if [ "$BASE_REF" = main ]; then
+              all "a pull request into main runs every suite, with no plan"
+            fi
             from="$BASE_SHA"; to="$HEAD_SHA"; range="$from...$to"
             if ! git show "$BASE_SHA:.github/scripts/ci/decide.py" > "$tmp/decide.py" 2>/dev/null; then
               all "the base commit has no decision script yet"
@@ -174,7 +178,12 @@ jobs:
   # so a pull request cannot rewrite the judge of its own checks (the wiring
   # test holds the rest of this in place).
   ci-gate:
-    name: ci-gate
+    # The name carries the event unless it is a pull request. `ci.yml` also runs
+    # on a push to develop, whose plan looked at the diff of that push only, and
+    # the promotion pull request from develop into main points at the same
+    # commit: a gate named alike on both events would let the push run satisfy
+    # the requirement of the pull request. Only `ci-gate` itself is required.
+    name: ${{ github.event_name == 'pull_request' && 'ci-gate' || format('ci-gate ({0})', github.event_name) }}
     needs: [decide, dco, workflow-lint, shell, rust, audit]
     if: ${{ always() }}
     runs-on: ubuntu-latest

@@ -32,6 +32,7 @@ fresh_copy() {
 	rm -rf "$WORK/tree"
 	mkdir -p "$WORK/tree/.github" "$WORK/tree/tests"
 	cp -r "$ROOT/.github/workflows" "$WORK/tree/.github/workflows"
+	cp -r "$ROOT/.github/actions" "$WORK/tree/.github/actions"
 	cp "$ROOT/.github/ci-map.json" "$ROOT/.github/required-checks.json" "$WORK/tree/.github/"
 	cp -r "$ROOT/tests/lib" "$WORK/tree/tests/lib"
 }
@@ -47,7 +48,13 @@ fresh_copy
 check "the real workflows satisfy every rule" "none" "$(finding)"
 
 fresh_copy
-sed -i 's/^    name: ci-gate$/    name: gate/' "$WORK/tree/.github/workflows/ci.yml"
+python3 - "$WORK/tree/.github/workflows/ci.yml" << 'PY'
+import re, sys
+p = sys.argv[1]
+s = open(p).read()
+s = re.sub(r"    name: \$\{\{ github\.event_name == 'pull_request' .*\n", "    name: gate\n", s, count=1)
+open(p, "w").write(s)
+PY
 check "renaming a job a ruleset requires is caught" \
 	"required check on develop is emitted by no workflow: 'ci-gate'" "$(finding)"
 
@@ -198,5 +205,52 @@ caught "a condition on the audit job is caught" "the audit job has a condition o
 fresh_copy
 sabotage ci.yml "printf '%s=true\n' rust shell workflows" "printf '%s=true\n' rust shell"
 caught "a fallback that forgets a suite is caught" "the fallback of the plan step answers for"
+
+# --- one parser, one enumerator, one producer per required check -------------------------
+fresh_copy
+sabotage ci.yml '    timeout-minutes: 5
+    outputs:' '    timeout-minutes: 5
+    timeout-minutes: 6
+    outputs:'
+caught "a workflow with a key twice is refused by the parser" "duplicate key 'timeout-minutes'"
+
+fresh_copy
+sabotage ci.yml "    name: \${{ github.event_name == 'pull_request' && 'ci-gate' || format('ci-gate ({0})', github.event_name) }}" "    name: ci-gate"
+caught "a ci-gate named the same on push and pull_request is caught" "required check 'ci-gate' on develop is produced by more than one workflow or event"
+
+fresh_copy
+cat > "$WORK/tree/.github/workflows/extra.yaml" << 'YAML'
+name: extra
+on: [pull_request]
+permissions: {}
+jobs:
+  ci-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+YAML
+caught "a workflow with the .yaml suffix is read like the others" "required check 'ci-gate' on develop is produced by more than one workflow or event"
+
+fresh_copy
+mkdir "$WORK/tree/.github/workflows/nested"
+cp "$WORK/tree/.github/workflows/freshness.yml" "$WORK/tree/.github/workflows/nested/freshness.yml"
+caught "a workflow below .github/workflows, which GitHub never runs, is caught" "GitHub never runs a workflow below .github/workflows"
+
+fresh_copy
+python3 - "$WORK/tree/.github/actions/cargo-audit/action.yml" << 'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+s = s.replace("    - name: Install the toolchain", "    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9\n      with:\n        path: ~/.cargo/bin\n        key: audit\n\n    - name: Install the toolchain", 1)
+open(p, "w").write(s)
+PY
+caught "a cache restored next to the audit tools is caught" "a security tool is downloaded and checked on every run, never restored from a cache"
+
+fresh_copy
+sabotage ci.yml '            if [ "$BASE_REF" = main ]; then
+              all "a pull request into main runs every suite, with no plan"
+            fi
+' ''
+caught "a plan step that stops running every suite for a base of main is caught" "the plan step must answer \`true\` for every suite when the pull request's base is main"
 
 exit "$fail"

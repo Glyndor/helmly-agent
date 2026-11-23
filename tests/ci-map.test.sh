@@ -89,6 +89,8 @@ expect_has() { # expect_has <path> <suite>...
 	done
 }
 expect_has internal/main.rs rust
+expect_has "$(git -C "$ROOT" ls-files internal/handlers/validate/compose | head -n 1)" rust
+expect_has "$(git -C "$ROOT" ls-files internal/handlers/validate/compose/tests | tail -n 1)" rust
 expect_has rust-toolchain.toml rust
 expect_has rustfmt.toml rust
 expect_has Cargo.toml rust
