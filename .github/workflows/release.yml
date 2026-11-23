@@ -128,9 +128,11 @@ jobs:
           persist-credentials: false
 
       - name: Install toolchain
+        # The toolchain `rust-toolchain.toml` pins, not whatever `stable` is on
+        # the day of the tag: a release is built with the compiler that the
+        # lint and test jobs of the same commit already used.
         run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+          rustup toolchain install
           rustup target add ${{ matrix.rust-target }}
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

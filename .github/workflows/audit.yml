@@ -24,7 +24,6 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     env:
-      TOOLCHAIN: '1.97'
       AUDIT_VERSION: '0.23.0'
       DENY_VERSION: '0.22.0'
     steps:
@@ -33,11 +32,9 @@ jobs:
           persist-credentials: false
 
       - name: Install toolchain
-        env:
-          TOOLCHAIN: ${{ env.TOOLCHAIN }}
-        run: |
-          rustup toolchain install "$TOOLCHAIN" --profile minimal
-          rustup default "$TOOLCHAIN"
+        # Whatever `rust-toolchain.toml` names, so the advisory surface is
+        # measured with the compiler the build uses.
+        run: rustup toolchain install
 
       - name: Install cargo-audit
         env:
