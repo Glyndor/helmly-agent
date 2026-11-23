@@ -11,8 +11,8 @@
 # the project root, which is where this file used to sit. Measured with
 # cargo-audit 0.22.2 on 2026-11-22, the version audit.yml and release.yml
 # install: with the file at the root the ignore list was not applied, with the
-# same file under `.cargo/` it was. audit.yml still passes
-# `--ignore RUSTSEC-2023-0071` on the command line, which is now redundant.
+# same file under `.cargo/` it was, and the workflows no longer repeat any
+# ignore on the command line.
 #
 # Re-check on: every sqlx release + every 6 months.
 

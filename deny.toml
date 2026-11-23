@@ -34,10 +34,10 @@ version = 2
 #   $ cargo tree --target all -i sqlx-mysql    # nothing to print
 #
 # cargo-audit reads Cargo.lock as text, where both are present, so it
-# reports the advisory and audit.yml carries `--ignore RUSTSEC-2023-0071`
-# with the reachability argument written out in audit.toml.
+# reports the advisory, so `.cargo/audit.toml` carries the ignore with the
+# reachability argument written out.
 #
-# So this file needs no ignore and audit.yml does. That is not an
+# So this file needs no ignore and `.cargo/audit.toml` does. That is not an
 # inconsistency to tidy away by adding one here or dropping one there.
 #
 # What this comment used to say was that the advisory was "no longer

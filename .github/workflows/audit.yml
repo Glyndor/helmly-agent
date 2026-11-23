@@ -12,27 +12,21 @@ on:
 permissions:
   contents: read
 
-# cargo-audit + cargo-deny gates, inlined. The org's
-# `rust-audit.yml` reusable offers no input to pass extra `--ignore`
-# flags and hardcodes `cargo audit --deny warnings` — and
-# cargo-audit 0.22.2 has a regression where audit.toml's
-# `[advisories] ignore = [...]` is not picked up from the project
-# root (verified: `cargo audit` runs from the working-directory but
-# does not read `./audit.toml` unless it's at `~/.cargo/audit.toml`).
-# This workflow inlines both cargo-audit and cargo-deny with the
-# toolchain pinned (so a floating preinstalled Rust can't silently
-# change the advisory surface). Reachability analysis for each
-# ignore lives in `audit.toml` (project root); license policy in
-# `deny.toml`. When cargo-audit is bumped past the 0.22.2 regression,
-# delete the inlined cargo-audit step and call the reusable again.
+# cargo-audit + cargo-deny gates. cargo-audit reads its ignore list from
+# `.cargo/audit.toml` (not from a file at the project root), with the
+# reachability argument for each entry beside it; cargo-deny reads `deny.toml`,
+# which also holds the license policy. Nothing is passed on the command line,
+# so what the two tools accept is written in those two files and nowhere else.
+# Both are installed at a pinned version, on a pinned toolchain, so a floating
+# preinstalled Rust cannot silently change the advisory surface.
 
 jobs:
   audit:
     runs-on: ubuntu-latest
     env:
       TOOLCHAIN: '1.97'
-      AUDIT_VERSION: '0.22.2'
-      DENY_VERSION: '0.20.2'
+      AUDIT_VERSION: '0.23.0'
+      DENY_VERSION: '0.22.0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -79,7 +73,7 @@ jobs:
         # ignore. If one ever cannot be bumped, record its reachability
         # measurement in `audit.toml` alongside the RUSTSEC ignore. Do not
         # reintroduce a flag that switches off the whole class.
-        run: cargo audit --deny warnings --ignore RUSTSEC-2023-0071
+        run: cargo audit --deny warnings
 
       - name: Run cargo deny
         run: cargo deny check

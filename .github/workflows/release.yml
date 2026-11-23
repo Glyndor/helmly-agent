@@ -90,10 +90,10 @@ jobs:
         # rather than wait for the weekly cron: the weekly run tells us
         # about a release we already shipped. Flags are kept identical to
         # `audit.yml` so the two gates cannot drift into disagreeing about
-        # what is acceptable; the one ignore is justified in `audit.toml`.
+        # what is acceptable; the ignores live in `.cargo/audit.toml`, each with its reachability argument.
         run: |
-          cargo install cargo-audit --version "=0.22.2" --locked
-          cargo audit --deny warnings --ignore RUSTSEC-2023-0071
+          cargo install cargo-audit --version "=0.23.0" --locked
+          cargo audit --deny warnings
 
   ci:
     needs: verify
@@ -174,7 +174,7 @@ jobs:
         with:
           subject-path: helmly-agent-linux-${{ matrix.arch }}
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: agent-${{ matrix.arch }}
           path: helmly-agent-linux-${{ matrix.arch }}
@@ -220,7 +220,7 @@ jobs:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           persist-credentials: false
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           merge-multiple: true
           path: dist
