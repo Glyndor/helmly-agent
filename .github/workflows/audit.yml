@@ -7,7 +7,7 @@ name: Audit
 # from the default branch only, so the cron does nothing until this file is on
 # `main`.
 #
-# One run costs about 30 seconds (two downloads and two scans) per branch.
+# One run costs under a minute (two downloads and one scan of a lockfile) per branch.
 # Weekly is the cadence of the change it watches when nothing is being pushed:
 # new advisories reach the database daily, and a Monday run is read the same day.
 
@@ -32,9 +32,31 @@ jobs:
     # sample from which it is tightened.
     timeout-minutes: 15
     steps:
+      # The only checkout is the event's own. The code this job runs, the local
+      # action, comes from it, and so does nothing of the branch being audited:
+      # from that branch, read-only, it takes exactly two files out of git, its
+      # lockfile and its audit configuration, into a clean directory outside the
+      # workspace. No code of it is checked out, no manifest of it is read by cargo,
+      # no cache is restored or saved. The branch names are the fixed list of the
+      # matrix and reach the shell through the environment.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ matrix.branch }}
           persist-credentials: false
 
+      - name: Take the lockfile and the audit configuration of the branch out of git
+        env:
+          BRANCH: ${{ matrix.branch }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}"
+          dir="$RUNNER_TEMP/audited"
+          mkdir -p "$dir/.cargo"
+          git show "origin/${BRANCH}:Cargo.lock" > "$dir/Cargo.lock"
+          test -s "$dir/Cargo.lock"
+          if git cat-file -e "origin/${BRANCH}:.cargo/audit.toml" 2> /dev/null; then
+            git show "origin/${BRANCH}:.cargo/audit.toml" > "$dir/.cargo/audit.toml"
+          fi
+
       - uses: ./.github/actions/cargo-audit
+        with:
+          lockfile: ${{ runner.temp }}/audited/Cargo.lock

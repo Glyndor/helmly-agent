@@ -339,4 +339,63 @@ json.dump(req, open(p, "w"))
 PY
 caught "one check name required on both bases, which carry different plans, is caught" "a check name is required on both develop and main"
 
+# --- the weekly audit takes two files out of git and runs nothing of the branch ---------------
+fresh_copy
+sabotage audit.yml '      - name: Take the lockfile' '      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ matrix.branch }}
+          path: audited
+          persist-credentials: false
+
+      - name: Take the lockfile'
+caught "a second checkout of the audited branch is caught" "fetches another ref with a checkout"
+
+fresh_copy
+sabotage audit.yml '        with:
+          persist-credentials: false
+
+      - name: Take the lockfile' '        with:
+          ref: ${{ matrix.branch }}
+          persist-credentials: false
+
+      - name: Take the lockfile'
+caught "a ref on the only checkout of the scheduled audit is caught" "fetches another ref with a checkout"
+
+fresh_copy
+sabotage audit.yml '      - uses: ./.github/actions/cargo-audit' '      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ~/.cargo
+          key: audit
+
+      - uses: ./.github/actions/cargo-audit'
+caught "a cache in the scheduled audit is caught" "a scheduled job installs clean"
+
+fresh_copy
+sabotage audit.yml '          if git cat-file' '          git show "origin/${BRANCH}:Cargo.toml" > "$dir/Cargo.toml"
+          if git cat-file'
+caught "a third file taken out of git is caught" "must take out of git exactly the lockfile and the audit configuration"
+
+fresh_copy
+sabotage audit.yml 'git show "origin/${BRANCH}:Cargo.lock" > "$dir/Cargo.lock"' 'git show "origin/${{ matrix.branch }}:Cargo.lock" > "$dir/Cargo.lock"'
+caught "a branch name interpolated into the script is caught" "puts an expression inside run:"
+
+fresh_copy
+sabotage audit.yml '        branch: [main, develop]' '        branch: [main, develop, attacker]'
+caught "a branch added to the matrix is caught" "must audit exactly the fixed branches"
+
+fresh_copy
+sabotage audit.yml '      - uses: ./.github/actions/cargo-audit' '      - uses: ./audited/.github/actions/cargo-audit'
+caught "a local action taken from another tree is caught" "runs a local action other than the audit action"
+
+fresh_copy
+sabotage audit.yml '          lockfile: ${{ runner.temp }}/audited/Cargo.lock' '          lockfile: ${{ runner.temp }}/audited/Cargo.lock
+          directory: audited'
+caught "extra inputs to the audit action are caught" "must call the audit action with the lockfile input and nothing else"
+
+fresh_copy
+sabotage audit.yml '      - uses: ./.github/actions/cargo-audit' '      - run: cargo deny --manifest-path "$RUNNER_TEMP/audited/Cargo.toml" check
+
+      - uses: ./.github/actions/cargo-audit'
+caught "cargo-deny in the scheduled audit is caught" "must not run cargo-deny"
+
 exit "$fail"

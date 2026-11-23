@@ -136,9 +136,9 @@ jobs:
           COVERAGE_THRESHOLD: ${{ inputs.coverage-threshold }}
         run: |
           cargo llvm-cov --locked --workspace --all-features --summary-only --json --output-path coverage.json
-          PCT=$(python3 -c "import json; print(json.load(open('coverage.json'))['data'][0]['totals']['lines']['percent'])")
+          PCT=$(python3 -I -c "import json; print(json.load(open('coverage.json'))['data'][0]['totals']['lines']['percent'])")
           echo "### Coverage: ${PCT}% (threshold: ${COVERAGE_THRESHOLD}%)" >> "$GITHUB_STEP_SUMMARY"
-          python3 - "$PCT" "$COVERAGE_THRESHOLD" <<'PY'
+          python3 -I - "$PCT" "$COVERAGE_THRESHOLD" <<'PY'
           import sys
           pct, threshold = float(sys.argv[1]), float(sys.argv[2])
           sys.exit(0 if pct >= threshold else 1)

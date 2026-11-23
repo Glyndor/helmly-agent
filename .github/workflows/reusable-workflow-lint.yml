@@ -109,7 +109,7 @@ jobs:
       - name: A job holding a secret must not install third-party tooling
         if: ${{ inputs.tooling-isolation }}
         run: |
-          python3 - <<'PY'
+          python3 -I - <<'PY'
           import glob
           import re
           import sys

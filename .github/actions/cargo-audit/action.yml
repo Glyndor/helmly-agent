@@ -21,10 +21,27 @@ description: >-
 #   cargo audit  .cargo/audit.toml   ignores, each with its reachability argument
 #   cargo deny   deny.toml           ignores, licenses, bans and sources
 
+# Two modes. With no input it audits the tree the workflow checked out: cargo-audit
+# on its lockfile and cargo-deny on its manifest. With `lockfile` it runs only
+# cargo-audit, on that one file, from the directory that holds it. The weekly run
+# uses the second mode for the branches it audits: it takes the lockfile and the
+# audit configuration of another branch out of git, as data, into a directory
+# outside the workspace, and never checks that branch's code out or lets cargo read
+# its manifests. cargo-deny does not run there: what it adds to the advisory check
+# (licenses, sources, bans) changes only when code changes, and that goes through
+# the `audit` job of every pull request and every push to `develop`.
+
+inputs:
+  lockfile:
+    description: Absolute path of a Cargo.lock to audit on its own, with the .cargo/audit.toml beside it; empty audits the checked-out tree.
+    required: false
+    default: ""
+
 runs:
   using: composite
   steps:
     - name: Install the toolchain
+      if: ${{ inputs.lockfile == '' }}
       # cargo-deny asks `cargo metadata` for the dependency graph, so the
       # toolchain that `rust-toolchain.toml` names has to be present.
       shell: bash
@@ -57,6 +74,7 @@ runs:
         echo "$dir" >> "$GITHUB_PATH"
 
     - name: cargo audit
+      if: ${{ inputs.lockfile == '' }}
       # `--deny warnings` covers vulnerabilities, soundness, unmaintained,
       # unsound and yanked: every advisory class. `--no-yanked` stays absent on
       # purpose; it is class-wide and once hid a reachable yanked crate for a
@@ -65,5 +83,25 @@ runs:
       run: cargo audit --deny warnings
 
     - name: cargo deny
+      if: ${{ inputs.lockfile == '' }}
       shell: bash
       run: cargo deny check
+
+    - name: cargo audit, on a lockfile alone
+      if: ${{ inputs.lockfile != '' }}
+      shell: bash
+      env:
+        LOCKFILE: ${{ inputs.lockfile }}
+      # The binary is run directly, not through `cargo`, from the directory of the
+      # lockfile, where the only configuration it can find is the
+      # `.cargo/audit.toml` that was put beside it. A lockfile that is missing,
+      # empty or a link is refused, so the audit cannot pass by finding nothing.
+      run: |
+        set -euo pipefail
+        case "$LOCKFILE" in /*) ;; *) echo "::error::the lockfile path must be absolute"; exit 1 ;; esac
+        if [ -L "$LOCKFILE" ] || [ ! -s "$LOCKFILE" ]; then
+          echo "::error::$LOCKFILE is missing, empty or a link"
+          exit 1
+        fi
+        cd "$(dirname "$LOCKFILE")"
+        cargo-audit audit --deny warnings --file "$LOCKFILE"

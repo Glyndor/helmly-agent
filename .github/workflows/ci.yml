@@ -111,7 +111,7 @@ jobs:
           git cat-file -e "${from}^{commit}" 2>/dev/null || all "the starting commit ${from} is not available"
           git cat-file -e "${to}^{commit}" 2>/dev/null || all "the ending commit ${to} is not available"
           git diff --name-only -z --no-renames "$range" > "$tmp/changed" || all "git diff failed"
-          out="$(python3 "$tmp/decide.py" --map "$tmp/ci-map.json" < "$tmp/changed")" || all "the decision script failed"
+          out="$(python3 -I "$tmp/decide.py" --map "$tmp/ci-map.json" < "$tmp/changed")" || all "the decision script failed"
           printf '%s\n' "$out" >> "$GITHUB_OUTPUT"
           printf '%s\n' "$out"
 

@@ -26,7 +26,10 @@ What it holds in place:
    lists `.yml` and `.yaml` at any depth, and composite actions are listed the
    same way. A workflow below `.github/workflows` is a finding: GitHub never
    runs it. A security tool is never restored from a cache.
-6. The exact shape of how ci.yml feeds each suite and how ci-gate reads it back,
+6. No job checks out a ref other than the event's. The weekly audit of develop and
+   main takes exactly two files of each out of git, runs nothing of them and
+   uses no cache.
+7. The exact shape of how ci.yml feeds each suite and how ci-gate reads it back,
    the closed list of inputs each reusable workflow takes, and the lines of the
    plan step that name the script or the map, which a pull request must read
    from its base commit.
@@ -206,6 +209,59 @@ def check_required(findings: list) -> None:
 		findings.append("a check name is required on both develop and main; the two bases carry different plans, so each ruleset needs its own name")
 
 
+# A tag checkout in the release workflow is the ref of the event itself (a pushed
+# tag, or the tag a dispatch names), and tags are protected by their own ruleset.
+EVENT_REF = "${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+SCHEDULED_BRANCHES = ["main", "develop"]
+SCHEDULED_GIT_LINES = [
+	'git show "origin/${BRANCH}:Cargo.lock" > "$dir/Cargo.lock"',
+	'git show "origin/${BRANCH}:.cargo/audit.toml" > "$dir/.cargo/audit.toml"',
+]
+
+
+def check_foreign_refs(findings: list) -> None:
+	"""No job checks out a ref other than the event's.
+
+	A checkout of another ref brings code of that ref into a job that may hold the
+	privileges of the event, and CodeQL calls it actions/cache-poisoning/
+	poisonable-step. The weekly audit of develop and main takes two files out of git
+	instead (see check_scheduled_audit).
+	"""
+	for path in workflow_files():
+		for job_id, job in (load_yaml(path).get("jobs") or {}).items():
+			for step in job.get("steps") or []:
+				if str(step.get("uses", "")).startswith("actions/checkout") and (step.get("with") or {}).get("ref") not in (None, EVENT_REF):
+					findings.append(f"{path.name}: job {job_id!r} fetches another ref with a checkout; take the files it needs out of git as data")
+
+
+def check_scheduled_audit(findings: list) -> None:
+	"""The weekly audit of another branch reads a lockfile and a config out of git, and runs nothing of that branch."""
+	job = (load_yaml(WORKFLOWS / "audit.yml").get("jobs") or {}).get("audit") or {}
+	steps = job.get("steps") or []
+	where = "audit.yml: job 'audit'"
+	if ((job.get("strategy") or {}).get("matrix") or {}).get("branch") != SCHEDULED_BRANCHES:
+		findings.append(f"{where} must audit exactly the fixed branches {SCHEDULED_BRANCHES}")
+	checkouts = [step for step in steps if str(step.get("uses", "")).startswith("actions/checkout")]
+	if len(checkouts) != 1 or "ref" in (checkouts[0].get("with") or {}):
+		findings.append(f"{where} must have exactly one checkout, the event's own, with no ref")
+	for step in steps:
+		uses = str(step.get("uses", ""))
+		if uses.startswith("actions/cache") or uses.startswith("actions/setup-") or "cache" in (step.get("with") or {}):
+			findings.append(f"{where} uses a cache ({uses or step.get('name')}); a scheduled job installs clean")
+		if uses.startswith("./") and uses != "./.github/actions/cargo-audit":
+			findings.append(f"{where} runs a local action other than the audit action: {uses}")
+		if uses == "./.github/actions/cargo-audit" and set(step.get("with") or {}) != {"lockfile"}:
+			findings.append(f"{where} must call the audit action with the lockfile input and nothing else")
+	runs = [str(step.get("run", "")) for step in steps if "run" in step]
+	if any("${{" in run for run in runs):
+		findings.append(f"{where} puts an expression inside run:; the branch name reaches the shell through env")
+	lines = [line.strip() for run in runs for line in run.splitlines() if "git show" in line]
+	if lines != SCHEDULED_GIT_LINES:
+		findings.append(f"{where} must take out of git exactly the lockfile and the audit configuration, and these lines: {SCHEDULED_GIT_LINES}")
+	if any("cargo-deny" in run or "cargo deny" in run for run in runs):
+		findings.append(f"{where} must not run cargo-deny, which reads the manifests of the tree")
+
+
 def check_names(findings: list) -> None:
 	"""Fail closed on names: an expression this file cannot resolve could equal a required name."""
 	_, problems = producers()
@@ -359,7 +415,7 @@ DECIDE_PATH_LINES = [
 	'if ! git show "$BASE_SHA:.github/scripts/ci/decide.py" > "$tmp/decide.py" 2>/dev/null; then',
 	'if ! git show "$BASE_SHA:.github/ci-map.json" > "$tmp/ci-map.json" 2>/dev/null; then',
 	'cp .github/scripts/ci/decide.py .github/ci-map.json "$tmp/"',
-	'out="$(python3 "$tmp/decide.py" --map "$tmp/ci-map.json" < "$tmp/changed")" || all "the decision script failed"',
+	'out="$(python3 -I "$tmp/decide.py" --map "$tmp/ci-map.json" < "$tmp/changed")" || all "the decision script failed"',
 ]
 
 
@@ -419,6 +475,8 @@ def main() -> int:
 		check_required(findings)
 		check_layout(findings)
 		check_names(findings)
+		check_foreign_refs(findings)
+		check_scheduled_audit(findings)
 		check_suites_consumed(findings)
 		check_reusables_honour_run(findings)
 		check_triggers(findings)
