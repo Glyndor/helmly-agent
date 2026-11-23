@@ -1,0 +1,37 @@
+name: Freshness
+
+# Fails when Dependabot has gone quiet. It ran inside ci.yml on every pull
+# request and every push (4 to 6 seconds each, 21 times in the sample of
+# 2026-08-28 to 2026-11-23) although what it reads, the date of the newest
+# Dependabot pull request, moves at most once a week. It now runs on the
+# cadence of that fact: weekly, and on demand.
+#
+# Weekly because dependabot.yml is weekly with a three-day cooldown, and the
+# limit below is fifteen days: two missed weeks before it reports. A quiet
+# Dependabot and a dead one look the same from outside, and this is the job
+# that tells them apart. GitHub reads `schedule:` from the default branch only,
+# so the cron does nothing until this file is on `main`.
+#
+# The companion guard for a workflow that stops firing is
+# `reusable-schedule-freshness.yml`. It has no caller yet: the only scheduled
+# workflow that would use it is audit.yml, whose last green scheduled run is
+# older than the limit until the release that carries the fix for the advisories
+# reaches `main` and a Monday run goes green. A guard added before that day
+# would be red from its first run, and a gate that is born red is one somebody
+# silences. The caller is added the first week the audit is green (tracked
+# in #162).
+
+on:
+  schedule:
+    - cron: "23 7 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  dependabot-freshness:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/reusable-dependabot-freshness.yml
+    with:
+      max-age-days: 15

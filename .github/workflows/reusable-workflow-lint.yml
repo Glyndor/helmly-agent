@@ -21,6 +21,13 @@ name: Workflow lint (reusable)
 on:
   workflow_call:
     inputs:
+      run:
+        description: >-
+          `false` skips every job. Anything else, including an empty value from
+          a `decide` job that failed, runs them, so a broken decision never
+          switches a check off.
+        type: string
+        default: "true"
       shellcheck-version:
         description: Exact shellcheck release tag to install from koalaman/shellcheck for actionlint's embedded shellcheck pass; bumped via .github releases
         type: string
@@ -37,14 +44,14 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: workflow-lint-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   workflow-lint:
     name: workflow-lint
+    if: ${{ inputs.run != 'false' }}
     runs-on: ubuntu-latest
+    # Measured 13 s mean, 23 s worst over 21 runs.
+    timeout-minutes: 10
     env:
       ACTIONLINT_VERSION: v1.7.12
     steps:

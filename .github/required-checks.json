@@ -1,0 +1,19 @@
+{
+  "develop": [
+    "rust / Format & lint",
+    "rust / Test",
+    "rust / Coverage",
+    "rust / MSRV",
+    "rust / Extra platforms",
+    "audit",
+    "dco / Signed-off-by present on every commit",
+    "workflow-lint / workflow-lint",
+    "shell / test",
+    "shell / shellcheck"
+  ],
+  "main": [
+    "rust / Format & lint",
+    "rust / Test",
+    "develop-only"
+  ]
+}
