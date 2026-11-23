@@ -13,10 +13,10 @@ name: CI
 # What one run costs, and what makes it skip. Measured on the 18 pull request
 # commits behind the 21 CI runs of 2026-08-28 to 2026-11-23: about 5.4 minutes
 # of jobs per run for the Rust suite, 0.5 for shell and workflow lint, 5 for the
-# audit. The `decide` job below reads the paths a change touched against
+# audit (about 30 seconds now, see the audit job). The `decide` job below reads the paths a change touched against
 # `.github/ci-map.json` and tells each suite whether it has anything to look at;
 # a documentation change runs no suite, and a change to one workflow file runs
-# only the workflow lint.
+# only the workflow lint and the shell suite. The audit has no plan.
 #
 # The check the rulesets require is `ci-gate`, one job that always runs. A
 # suite that is not needed does not leave its jobs out: they are there and
@@ -53,7 +53,6 @@ jobs:
     outputs:
       rust: ${{ steps.decide.outputs.rust }}
       shell: ${{ steps.decide.outputs.shell }}
-      audit: ${{ steps.decide.outputs.audit }}
       workflows: ${{ steps.decide.outputs.workflows }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -78,7 +77,7 @@ jobs:
           set -uo pipefail
           all() {
             echo "::notice::$1; every suite runs"
-            printf '%s=true\n' rust shell audit workflows >> "$GITHUB_OUTPUT"
+            printf '%s=true\n' rust shell workflows >> "$GITHUB_OUTPUT"
             exit 0
           }
           tmp="$RUNNER_TEMP/decide"
@@ -147,12 +146,13 @@ jobs:
       # the same pull request that raises the coverage, never silently.
       coverage-threshold: 45
 
-  # The check is named `audit`, as the ruleset requires, so this is a job of
-  # this workflow and not a call to a reusable (that would name it
-  # `audit / <job>`). The weekly run in audit.yml uses the same action.
+  # The dependency audit has no plan: it runs on every pull request and every
+  # push to develop. The paths a change touches say nothing about the advisory
+  # database, which moves on its own, so a new advisory against what `develop`
+  # already depends on must show up on the next pull request and not at the
+  # release. With the pinned binaries it takes about 30 seconds. The weekly run
+  # in audit.yml uses the same action, on `main` and on `develop`.
   audit:
-    needs: [decide]
-    if: ${{ !cancelled() && needs.decide.outputs.audit != 'false' }}
     runs-on: ubuntu-latest
     # A ceiling, not a measurement: the first runs of this shape are the
     # sample from which it is tightened.
@@ -190,7 +190,6 @@ jobs:
       PLAN_WORKFLOWS: ${{ needs.decide.outputs.workflows }}
       PLAN_SHELL: ${{ needs.decide.outputs.shell }}
       PLAN_RUST: ${{ needs.decide.outputs.rust }}
-      PLAN_AUDIT: ${{ needs.decide.outputs.audit }}
     steps:
       - name: Every suite passed, or the plan said it had nothing to check
         run: |
@@ -208,9 +207,13 @@ jobs:
           suite workflow-lint "$WORKFLOW_LINT" "$PLAN_WORKFLOWS"
           suite shell "$SHELL_SUITE" "$PLAN_SHELL"
           suite rust "$RUST" "$PLAN_RUST"
-          suite audit "$AUDIT" "$PLAN_AUDIT"
+          [ "$AUDIT" = success ] || fail "audit ended '$AUDIT' and has no plan to excuse it"
           if [ "$EVENT" = pull_request ]; then
             [ "$DCO" = success ] || fail "dco ended '$DCO'"
           fi
+          printf '%-14s %-10s %s\n' job result plan
+          printf '%-14s %-10s %s\n' decide "$DECIDE" - dco "$DCO" - audit "$AUDIT" - \
+            workflow-lint "$WORKFLOW_LINT" "${PLAN_WORKFLOWS:-empty}" shell "$SHELL_SUITE" "${PLAN_SHELL:-empty}" \
+            rust "$RUST" "${PLAN_RUST:-empty}"
           [ "$bad" -eq 0 ] && echo "every suite passed or had nothing to check"
           exit "$bad"

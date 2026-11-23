@@ -42,7 +42,7 @@ decide() {
 	shift
 	printf '%s\n' "$@" | python3 "$DECIDE" --map "$map" 2> /dev/null | sed -n 's/=true$//p' | sort | tr '\n' ' ' | sed 's/ $//'
 }
-all_suites="audit rust shell workflows"
+all_suites="rust shell workflows"
 
 # --- the real map against the real tree -----------------------------------------
 tracked="$WORK/tracked"
@@ -58,8 +58,54 @@ check "a migration runs the Rust suite only" "rust" "$(decide "$MAP" migrations/
 check "the installer runs the shell suite only" "shell" "$(decide "$MAP" setup-agent.sh)"
 check "a shell test runs the shell suite only" "shell" "$(decide "$MAP" tests/run.sh)"
 check "a workflow file runs the workflow lint and the shell suite, which holds the wiring tests" "shell workflows" "$(decide "$MAP" .github/workflows/release.yml)"
-check "the audit policy runs only the audit" "audit" "$(decide "$MAP" deny.toml)"
-check "the lockfile runs the audit and the Rust suite" "audit rust" "$(decide "$MAP" Cargo.lock)"
+check "the audit policy files run the Rust suite, the audit itself having no plan" "rust" "$(decide "$MAP" deny.toml)"
+check "the lockfile runs the Rust suite" "rust" "$(decide "$MAP" Cargo.lock)"
+
+# --- the list of paths no suite looks at is closed -----------------------------------
+# Moving a source file into `no-suite` leaves it claimed and silences its suite.
+# So the list is written here whole, and a change to it is a change to this test.
+expected_no_suite='**/*.md
+.editorconfig
+.env.example
+.github/CODEOWNERS
+.github/ISSUE_TEMPLATE/**
+.github/dependabot.yml
+.gitignore
+LICENSE'
+actual_no_suite="$(python3 -c 'import json,sys; print("\n".join(sorted(json.load(open(sys.argv[1]))["no-suite"])))' "$MAP")"
+check "the no-suite list is exactly the documents and repository settings" "$expected_no_suite" "$actual_no_suite"
+
+# --- what each kind of file must run ------------------------------------------------
+# One real file of each kind, and the suites it has to reach (it may reach more).
+expect_has() { # expect_has <path> <suite>...
+	local path="$1" got want
+	shift
+	got=" $(decide "$MAP" "$path") "
+	for want in "$@"; do
+		case "$got" in
+			*" $want "*) check "$path runs the $want suite" "yes" "yes" ;;
+			*) check "$path runs the $want suite" "yes" "no (got:$got)" ;;
+		esac
+	done
+}
+expect_has internal/main.rs rust
+expect_has rust-toolchain.toml rust
+expect_has rustfmt.toml rust
+expect_has Cargo.toml rust
+expect_has Cargo.lock rust
+expect_has deny.toml rust
+expect_has .cargo/audit.toml rust
+expect_has "$(git -C "$ROOT" ls-files .sqlx | head -n 1)" rust
+expect_has "$(git -C "$ROOT" ls-files migrations | head -n 1)" rust
+expect_has setup-agent.sh shell
+expect_has update-agent.sh shell
+expect_has tests/run.sh shell
+expect_has .github/scripts/sign.py shell
+expect_has .github/workflows/reusable-rust-ci.yml rust shell workflows
+expect_has .github/workflows/reusable-shell-ci.yml shell workflows
+expect_has .github/workflows/reusable-workflow-lint.yml workflows shell
+expect_has .github/workflows/release.yml workflows shell
+expect_has .github/actions/cargo-audit/action.yml workflows shell
 
 # --- what watches the CI cannot be left unwatched ---------------------------------
 # The wiring tests live in the shell suite. Every path that can change what the

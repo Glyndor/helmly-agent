@@ -8,7 +8,9 @@
       "rustfmt.toml",
       ".sqlx/**",
       "migrations/**",
-      ".github/workflows/reusable-rust-ci.yml"
+      ".github/workflows/reusable-rust-ci.yml",
+      "deny.toml",
+      ".cargo/audit.toml"
     ],
     "shell": [
       "setup-agent.sh",
@@ -18,13 +20,6 @@
       ".github/workflows/**",
       ".github/actions/**",
       ".github/required-checks.json"
-    ],
-    "audit": [
-      "Cargo.toml",
-      "Cargo.lock",
-      "deny.toml",
-      ".cargo/audit.toml",
-      ".github/actions/cargo-audit/**"
     ],
     "workflows": [
       ".github/workflows/**",

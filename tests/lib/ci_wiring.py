@@ -126,10 +126,95 @@ def check_gate(findings: list) -> None:
 		findings.append("ci.yml: ci-gate must run `if: ${{ always() }}`, or a skipped gate reports success")
 	needs = set(gate.get("needs") or [])
 	for job_id in jobs:
-		if job_id in ("ci-gate", "halt"):
+		if job_id == "ci-gate":
 			continue
 		if job_id not in needs:
 			findings.append(f"ci.yml: ci-gate does not need {job_id!r}, so its result is not judged")
+
+
+# The exact shape of how ci.yml feeds each suite and how ci-gate reads it back.
+# A pair crossed by hand (rust given the plan of shell, rust's result read from
+# the audit job) passes every check that only counts names, so the pairs are
+# written here and compared whole.
+SUITE_JOBS = {"workflow-lint": "workflows", "shell": "shell", "rust": "rust"}
+GATE_RESULTS = {
+	"DECIDE": "decide",
+	"DCO": "dco",
+	"WORKFLOW_LINT": "workflow-lint",
+	"SHELL_SUITE": "shell",
+	"RUST": "rust",
+	"AUDIT": "audit",
+}
+GATE_PLANS = {"PLAN_WORKFLOWS": "workflows", "PLAN_SHELL": "shell", "PLAN_RUST": "rust"}
+# The only entries ci.yml may pass to each reusable workflow. Anything else, a
+# `tooling-isolation: false` or a `severity: error`, quietly changes what a
+# required check looks at.
+CALL_INPUTS = {
+	"workflow-lint": {"run"},
+	"shell": {"run", "test-command", "apt-packages"},
+	"rust": {"run", "coverage-threshold"},
+}
+CALL_VALUES = {
+	("shell", "test-command"): "./tests/run.sh",
+	("shell", "apt-packages"): "python3-cryptography",
+}
+MIN_COVERAGE = 45
+# Every line of the plan step that names the script or the map, word for word.
+DECIDE_PATH_LINES = [
+	'if ! git show "$BASE_SHA:.github/scripts/ci/decide.py" > "$tmp/decide.py" 2>/dev/null; then',
+	'if ! git show "$BASE_SHA:.github/ci-map.json" > "$tmp/ci-map.json" 2>/dev/null; then',
+	'cp .github/scripts/ci/decide.py .github/ci-map.json "$tmp/"',
+	'out="$(python3 "$tmp/decide.py" --map "$tmp/ci-map.json" < "$tmp/changed")" || all "the decision script failed"',
+]
+
+
+def check_shape(findings: list) -> None:
+	jobs = load_yaml(WORKFLOWS / "ci.yml")["jobs"]
+	for job_id, suite in SUITE_JOBS.items():
+		job = jobs.get(job_id, {})
+		with_ = job.get("with") or {}
+		if with_.get("run") != "${{ needs.decide.outputs." + suite + " }}":
+			findings.append(f"ci.yml: job {job_id!r} must pass `run: ${{{{ needs.decide.outputs.{suite} }}}}`, the verdict of its own suite")
+		extra = set(with_) - CALL_INPUTS[job_id]
+		if extra:
+			findings.append(f"ci.yml: job {job_id!r} passes {sorted(extra)} to its reusable workflow, which may take only {sorted(CALL_INPUTS[job_id])}")
+		for (name, key), value in CALL_VALUES.items():
+			if name == job_id and with_.get(key) != value:
+				findings.append(f"ci.yml: job {job_id!r} must pass {key}: {value!r}")
+	threshold = (jobs.get("rust", {}).get("with") or {}).get("coverage-threshold", 0)
+	if not isinstance(threshold, int) or threshold < MIN_COVERAGE:
+		findings.append(f"ci.yml: the coverage threshold must be an integer of at least {MIN_COVERAGE}, the ratchet never goes down")
+	expected = {"EVENT": "${{ github.event_name }}"}
+	expected.update({var: "${{ needs." + job + ".result }}" for var, job in GATE_RESULTS.items()})
+	expected.update({var: "${{ needs.decide.outputs." + suite + " }}" for var, suite in GATE_PLANS.items()})
+	if (jobs.get("ci-gate", {}).get("env") or {}) != expected:
+		findings.append("ci.yml: the env of ci-gate is not the exact pairing of each result and each plan with its own job and suite")
+	audit = jobs.get("audit", {})
+	if "if" in audit or "needs" in audit:
+		findings.append("ci.yml: the audit job has a condition or a dependency; it runs on every pull request and push, with no plan")
+	steps = jobs.get("decide", {}).get("steps") or []
+	run = "\n".join(str(step.get("run", "")) for step in steps)
+	lines = [line.strip() for line in run.splitlines()]
+	for line in lines:
+		if (".github/scripts/ci/" in line or ".github/ci-map.json" in line) and line not in DECIDE_PATH_LINES:
+			findings.append(f"ci.yml: the plan step has a line about the script or the map that is not one of the known ones: {line!r}")
+	for line in DECIDE_PATH_LINES:
+		if lines.count(line) != 1:
+			findings.append(f"ci.yml: the plan step must contain exactly once: {line}")
+	try:
+		push_branch = lines.index('elif [ "$EVENT" = push ]; then')
+		end = lines.index("else", push_branch)
+		if not push_branch < lines.index(DECIDE_PATH_LINES[2]) < end:
+			findings.append("ci.yml: the plan step reads the script from the checkout outside the push branch")
+	except ValueError:
+		findings.append("ci.yml: the plan step lost its push branch")
+	printed = set()
+	for line in lines:
+		if line.startswith("printf '%s=true\\n'"):
+			printed = set(line.split("true\\n'", 1)[1].split(">>", 1)[0].split())
+	cmap = json.loads((ROOT / ".github" / "ci-map.json").read_text(encoding="utf-8"))
+	if printed != set(cmap["suites"]):
+		findings.append(f"ci.yml: the fallback of the plan step answers for {sorted(printed)} and the map has {sorted(cmap['suites'])}")
 
 
 def main() -> int:
@@ -140,6 +225,7 @@ def main() -> int:
 		check_reusables_honour_run(findings)
 		check_gate(findings)
 		check_switches(findings)
+		check_shape(findings)
 	except (OSError, ValueError, KeyError, yaml.YAMLError) as exc:
 		print(f"cannot read the workflows: {exc!r}")
 		return 2

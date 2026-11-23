@@ -149,8 +149,9 @@ jobs:
   # declares no minimum Rust version and tests on Linux only. Both used to be
   # gates over jobs that were always skipped. They stay as the checks they are,
   # named the same, so the ruleset keeps matching them, and they report the
-  # honest answer. Dropping them is a ruleset change, listed in the report that
-  # came with this file.
+  # honest answer. Both go as soon as no ruleset requires them by name: a
+  # required check that is missing blocks every pull request, so the jobs
+  # outlive the requirement and not the other way round.
   msrv-gate:
     name: MSRV
     if: ${{ inputs.run != 'false' }}

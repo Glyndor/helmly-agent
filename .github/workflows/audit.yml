@@ -1,15 +1,15 @@
 name: Audit
 
-# The weekly run of the dependency audit. A pull request is audited by the
-# `audit` job of ci.yml, and only when the lockfile, the manifest or one of the
-# two policy files changed; this workflow exists for the case in which nothing
-# changed in the repository and an advisory was published against what it
-# already depends on. GitHub reads `schedule:` from the default branch only, so
-# the cron does nothing until this file is on `main`.
+# The weekly run of the dependency audit, on `main` and on `develop`. A pull
+# request and every push to `develop` are audited by the `audit` job of ci.yml;
+# this workflow exists for the days nothing is pushed and an advisory is
+# published against what a branch already depends on. GitHub reads `schedule:`
+# from the default branch only, so the cron does nothing until this file is on
+# `main`.
 #
-# One run costs about 30 seconds (two downloads and two scans). Weekly is the
-# cadence of the change it watches: new advisories reach the database daily,
-# releases of this agent are far rarer, and a Monday run is read the same day.
+# One run costs about 30 seconds (two downloads and two scans) per branch.
+# Weekly is the cadence of the change it watches when nothing is being pushed:
+# new advisories reach the database daily, and a Monday run is read the same day.
 
 on:
   schedule:
@@ -22,13 +22,19 @@ permissions:
 
 jobs:
   audit:
+    name: audit (${{ matrix.branch }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        branch: [main, develop]
     # A ceiling, not a measurement: the first runs of this shape are the
     # sample from which it is tightened.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ matrix.branch }}
           persist-credentials: false
 
       - uses: ./.github/actions/cargo-audit
