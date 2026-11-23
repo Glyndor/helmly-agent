@@ -70,9 +70,16 @@ check "a source change runs the Rust suite and not the shell suite" "rust=true s
 
 mkrepo c yes
 echo changed > "$WORK/c/README.md"
-check "a pull request into main runs every suite, even for a documentation change" "$ALL_TRUE" "$(plan c pull_request main)"
-grep -q 'into main runs every suite' "$WORK/c.log" && r=said || r=silent
+check "a pull request into main runs every suite, even for a documentation change (the base is not develop)" "$ALL_TRUE" "$(plan c pull_request main)"
+grep -q 'the base is not develop' "$WORK/c.log" && r=said || r=silent
 check "and says why" "said" "$r"
+
+mkrepo c2 yes
+echo changed > "$WORK/c2/README.md"
+check "a pull request whose base is not develop or main runs every suite" "$ALL_TRUE" "$(plan c2 pull_request topic/other)"
+mkrepo c3 yes
+echo changed > "$WORK/c3/README.md"
+check "a pull request whose base is Develop runs every suite: the plan trusts the base planner only for develop" "$ALL_TRUE" "$(plan c3 pull_request Develop)"
 
 mkrepo d no
 echo changed > "$WORK/d/README.md"

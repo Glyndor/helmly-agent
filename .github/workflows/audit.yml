@@ -25,7 +25,8 @@ jobs:
     name: audit (${{ matrix.branch }})
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: true
+      # One branch failing the audit does not hide the result for the other.
+      fail-fast: false
       matrix:
         branch: [main, develop]
     # A ceiling, not a measurement: the first runs of this shape are the

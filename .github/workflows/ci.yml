@@ -61,12 +61,13 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request makes the earlier run answer about a commit that
-# no longer exists, so it is cancelled. A push to develop is never cancelled:
-# each one is a merge somebody will read the result of.
+# A run is never cancelled by a newer one. The dependency audit and the DCO check
+# are jobs of this workflow, and a security result is not something a later push
+# gets to cancel: a newer run for the same pull request waits behind the running
+# one (and replaces an older run that has not started), it does not cancel it.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 jobs:
   decide:
@@ -108,8 +109,8 @@ jobs:
           tmp="$RUNNER_TEMP/decide"
           mkdir -p "$tmp"
           if [ "$EVENT" = pull_request ]; then
-            if [ "$BASE_REF" = main ]; then
-              all "a pull request into main runs every suite, with no plan"
+            if [ "$BASE_REF" != develop ]; then
+              all "the base is not develop, so no plan is trusted and every suite runs"
             fi
             from="$BASE_SHA"; to="$HEAD_SHA"; range="$from...$to"
             if ! git show "$BASE_SHA:.github/scripts/ci/decide.py" > "$tmp/decide.py" 2>/dev/null; then
@@ -258,14 +259,21 @@ jobs:
     # alike on both events would let the push run satisfy the pull request. A
     # pull request into develop is planned by its diff and one into main runs
     # every suite, so the two bases carry different names and each ruleset
-    # requires its own: `ci-gate` for develop, `ci-gate (main)` for main.
-    name: ${{ github.event_name == 'pull_request' && (github.event.pull_request.base.ref == 'main' && 'ci-gate (main)' || 'ci-gate') || format('ci-gate ({0})', github.event_name) }}
+    # requires its own: `ci-gate` for develop, `ci-gate (main)` for main. Any
+    # other base, which the trigger below does not let through, gets a name no
+    # ruleset requires (`ci-gate (other base)`), so a pull request stacked on the
+    # branch of another one cannot produce a required name and carry it along when
+    # it is retargeted. `==` in an expression ignores case, so the trigger, which
+    # does not, is what limits the bases, and the gate checks the base in the shell
+    # as well before it approves under either name.
+    name: ${{ github.event_name == 'pull_request' && (github.event.pull_request.base.ref == 'develop' && 'ci-gate' || (github.event.pull_request.base.ref == 'main' && 'ci-gate (main)' || 'ci-gate (other base)')) || format('ci-gate ({0})', github.event_name) }}
     needs: [decide, dco, workflow-lint, shell, rust, audit, structure]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
       EVENT: ${{ github.event_name }}
+      BASE_REF: ${{ github.event.pull_request.base.ref }}
       DECIDE: ${{ needs.decide.result }}
       DCO: ${{ needs.dco.result }}
       WORKFLOW_LINT: ${{ needs.workflow-lint.result }}
@@ -282,6 +290,11 @@ jobs:
           set -uo pipefail
           bad=0
           fail() { echo "::error::$1"; bad=1; }
+          # The name of this job depends on the base, and `==` in an expression ignores
+          # case, so the base is checked here, exactly, before anything is approved.
+          if [ "$EVENT" = pull_request ] && [ "$BASE_REF" != develop ] && [ "$BASE_REF" != main ]; then
+            fail "the base of the pull request is '$BASE_REF', which is neither develop nor main"
+          fi
           [ "$DECIDE" = success ] || fail "the plan job ended '$DECIDE', so no skipped suite can be trusted"
           suite() { # suite <name> <result> <plan>
             case "$2" in

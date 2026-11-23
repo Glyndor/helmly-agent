@@ -16,7 +16,8 @@ permissions:
 
 concurrency:
   group: codeql-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # The analysis is a security result, so a newer run never cancels it.
+  cancel-in-progress: false
 
 jobs:
   analyze:

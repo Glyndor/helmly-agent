@@ -20,10 +20,13 @@ def check_required(findings: list) -> None:
 	the other's requirement. Jobs with an `if` that skips them are counted.
 	"""
 	required = json.loads((ROOT / ".github" / "required-checks.json").read_text(encoding="utf-8"))
-	made, _ = producers()
+	made = {}
+	for name, who in producers()[0].items():
+		# GitHub does not tell names apart by case, so neither does the index.
+		made.setdefault(name.lower(), set()).update(who)
 	for branch, names in required.items():
 		for name in names:
-			relevant = {(wf, ev) for wf, ev, base in made.get(name, set()) if ev != "pull_request" or base in (branch, "*")}
+			relevant = {(wf, ev) for wf, ev, base in made.get(name.lower(), set()) if ev != "pull_request" or base in (branch, "*")}
 			if not any(ev == "pull_request" for _, ev in relevant):
 				findings.append(f"required check on {branch} is emitted by no workflow: {name!r}")
 			elif len(relevant) > 1:
