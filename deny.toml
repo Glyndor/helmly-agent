@@ -9,6 +9,14 @@ all-features = true
 
 [advisories]
 version = 2
+# Report an unmaintained crate wherever it sits in the graph, as cargo-audit
+# does. cargo-deny 0.22 narrowed its default to the crates the workspace
+# depends on directly (measured 2026-11-22: with the default,
+# `unsafe-libyaml`, which arrives through `serde_yaml_ng`, was no longer
+# reported and the ignore for it below was flagged as never encountered).
+# Leaving the default would have meant the two gates disagreeing about the
+# same crate, so this asks for the stricter reading explicitly.
+unmaintained = "all"
 # Two unmaintained advisories with no patched version are accepted below, for
 # the reasons and with the retirement conditions written out in
 # `.cargo/audit.toml`. cargo-deny reads its own file, so each tool needs its
