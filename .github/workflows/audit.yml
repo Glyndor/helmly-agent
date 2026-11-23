@@ -1,9 +1,18 @@
 name: Audit
 
+# The dependency audit: on every pull request and push, and weekly for the case
+# in which nothing changed in the repository and an advisory was published
+# against what it already depends on. GitHub reads `schedule:` from the default
+# branch only, so the cron does nothing until this file is on `main`.
+#
+# The tools, their versions and their checksums live in the composite action
+# `.github/actions/cargo-audit`, which the release gate uses too.
+
 on:
   schedule:
     # Weekly Monday 06:00 UTC.
     - cron: '0 6 * * 1'
+  workflow_dispatch:
   push:
     branches: [main, develop]
   pull_request:
@@ -12,65 +21,15 @@ on:
 permissions:
   contents: read
 
-# cargo-audit + cargo-deny gates. cargo-audit reads its ignore list from
-# `.cargo/audit.toml` (not from a file at the project root), with the
-# reachability argument for each entry beside it; cargo-deny reads `deny.toml`,
-# which also holds the license policy. Nothing is passed on the command line,
-# so what the two tools accept is written in those two files and nowhere else.
-# Both are installed at a pinned version, on a pinned toolchain, so a floating
-# preinstalled Rust cannot silently change the advisory surface.
-
 jobs:
   audit:
     runs-on: ubuntu-latest
-    env:
-      AUDIT_VERSION: '0.23.0'
-      DENY_VERSION: '0.22.0'
+    # A ceiling, not a measurement: the first runs of this shape are the
+    # sample from which it is tightened.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Install toolchain
-        # Whatever `rust-toolchain.toml` names, so the advisory surface is
-        # measured with the compiler the build uses.
-        run: rustup toolchain install
-
-      - name: Install cargo-audit
-        env:
-          TOOL_VERSION: ${{ env.AUDIT_VERSION }}
-        run: command -v cargo-audit >/dev/null || cargo install cargo-audit --version "=$TOOL_VERSION" --locked
-
-      - name: Install cargo-deny
-        env:
-          TOOL_VERSION: ${{ env.DENY_VERSION }}
-        run: command -v cargo-deny >/dev/null || cargo install cargo-deny --version "=$TOOL_VERSION" --locked
-
-      - name: Run cargo audit
-        # `--deny warnings` covers vulnerabilities + soundness +
-        # unmaintained + unsound + yanked — every advisory class. We
-        # ignore only what's documented in `audit.toml` with a measured
-        # reachability argument.
-        #
-        # `--no-yanked` is deliberately absent. It was added to silence
-        # `spin 0.9.8`, a lockfile ghost that `cargo tree --target all -i
-        # spin` shows is in no build graph, and silencing it was defensible
-        # on its own. The problem is that the flag is class-wide: it went
-        # on to hide `chacha20 0.10.0`, which `cargo tree` resolves through
-        # `rand 0.10.1` into the binary, and which was yanked too. One
-        # reachable crate stayed invisible for as long as the flag was set,
-        # with nothing to signal that the situation had changed.
-        #
-        # Both are bumped in `Cargo.lock` now (chacha20 0.10.2, spin
-        # 0.9.9), so the flag is not needed and the next yanked crate will
-        # surface instead of arriving pre-forgiven.
-        #
-        # A yanked crate is a release-deprecation signal, not a
-        # vulnerability, so the fix is a lockfile bump rather than an
-        # ignore. If one ever cannot be bumped, record its reachability
-        # measurement in `audit.toml` alongside the RUSTSEC ignore. Do not
-        # reintroduce a flag that switches off the whole class.
-        run: cargo audit --deny warnings
-
-      - name: Run cargo deny
-        run: cargo deny check
+      - uses: ./.github/actions/cargo-audit

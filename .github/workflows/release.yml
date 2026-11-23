@@ -87,13 +87,12 @@ jobs:
 
       - name: Audit dependencies for known advisories
         # A RUSTSEC advisory in a pinned dependency must block publishing
-        # rather than wait for the weekly cron: the weekly run tells us
-        # about a release we already shipped. Flags are kept identical to
-        # `audit.yml` so the two gates cannot drift into disagreeing about
-        # what is acceptable; the ignores live in `.cargo/audit.toml`, each with its reachability argument.
-        run: |
-          cargo install cargo-audit --version "=0.23.0" --locked
-          cargo audit --deny warnings
+        # rather than wait for the weekly cron: the weekly run tells us about
+        # a release we already shipped. The action is the one the pull request
+        # gate and the weekly run use, so the three cannot disagree about what
+        # is acceptable; the ignores live in `.cargo/audit.toml` and
+        # `deny.toml`, each with its reachability argument.
+        uses: ./.github/actions/cargo-audit
 
   ci:
     needs: verify
