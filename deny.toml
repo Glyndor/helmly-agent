@@ -9,6 +9,14 @@ all-features = true
 
 [advisories]
 version = 2
+# Report an unmaintained crate wherever it sits in the graph, as cargo-audit
+# does. cargo-deny 0.22 narrowed its default to the crates the workspace
+# depends on directly (measured 2026-11-22: with the default,
+# `unsafe-libyaml`, which arrives through `serde_yaml_ng`, was no longer
+# reported and the ignore for it below was flagged as never encountered).
+# Leaving the default would have meant the two gates disagreeing about the
+# same crate, so this asks for the stricter reading explicitly.
+unmaintained = "all"
 # Two unmaintained advisories with no patched version are accepted below, for
 # the reasons and with the retirement conditions written out in
 # `.cargo/audit.toml`. cargo-deny reads its own file, so each tool needs its
@@ -34,10 +42,10 @@ version = 2
 #   $ cargo tree --target all -i sqlx-mysql    # nothing to print
 #
 # cargo-audit reads Cargo.lock as text, where both are present, so it
-# reports the advisory and audit.yml carries `--ignore RUSTSEC-2023-0071`
-# with the reachability argument written out in audit.toml.
+# reports the advisory, so `.cargo/audit.toml` carries the ignore with the
+# reachability argument written out.
 #
-# So this file needs no ignore and audit.yml does. That is not an
+# So this file needs no ignore and `.cargo/audit.toml` does. That is not an
 # inconsistency to tidy away by adding one here or dropping one there.
 #
 # What this comment used to say was that the advisory was "no longer

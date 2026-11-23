@@ -99,7 +99,7 @@ cargo llvm-cov --locked --workspace --all-features \
   --summary-only --json --output-path coverage.json
 ./tests/run.sh
 shellcheck -S style setup-agent.sh update-agent.sh tests/*.sh
-cargo audit --deny warnings --ignore RUSTSEC-2023-0071
+cargo audit --deny warnings
 cargo deny check
 ```
 Use **shellcheck v0.11.0**, the version CI pins. This is not pedantry: the
