@@ -30,8 +30,44 @@ cargo build --release
 cargo test
 ```
 
-Depends on [`podup`](https://github.com/Glyndor/podup) as a git
-dependency.
+The toolchain is the one `rust-toolchain.toml` names; `rustup` installs it on
+first use. The agent does not link `podup` or any other Glyndor crate: it
+creates one rootless Podman user per tenant and runs `podman` as that user.
+
+## Commands
+
+`helmly-agent` with no subcommand runs the daemon. The subcommands are helpers
+for the installer and for the operator:
+
+| command | what it does |
+|---|---|
+| `logs [--follow] [--errors] [--since <time>]` | Show or stream the agent's journald logs. |
+| `gen-rand <bytes> [--encoding hex\|base64]` | Print cryptographically secure random bytes. |
+| `gen-uuid-v7` | Print a time-ordered UUIDv7. |
+| `gen-tls --san <address>... [--out-dir <dir>]` | Create this agent's mTLS key pair (`agent.crt.der`, `agent.key.der`, mode 0600) and print the certificate's SHA-256 fingerprint. It refuses to overwrite existing files, and the private key never leaves the host. `--san` is repeatable and `--out-dir` defaults to `/etc/glyndor/helmly/tls`. |
+
+## Configuration
+
+The daemon reads its configuration from the environment. A secret can be given
+as `NAME` or as `NAME_FILE`, the path of a file holding it (`NAME_FILE` wins
+when both are set); under systemd the installer uses `LoadCredential` files.
+
+| key | required | meaning |
+|---|---|---|
+| `AGENT_ID` | yes | This agent's UUID v7. |
+| `DATABASE_URL` / `DATABASE_URL_FILE` | yes | PostgreSQL connection string of the agent's own database. |
+| `INTERNAL_TOKEN` / `INTERNAL_TOKEN_FILE` | yes | Bearer token for the metrics WebSocket and the system endpoint. |
+| `DASHBOARD_VERIFY_KEY` / `_FILE` | one of these two | The dashboard's Ed25519 verify key, base64, 32 bytes. Seeds `/etc/glyndor/helmly/dashboard-keyring` on first start. |
+| `/etc/glyndor/helmly/dashboard-keyring` | one of these two | One base64 verify key per line, mode 0600. The keyring read first; it allows two-phase key rotation. |
+| `TLS_CERT_DER_FILE`, `TLS_KEY_DER_FILE`, `TLS_CA_CERT_DER_FILE` | yes, all three | Paths of the server certificate, its PKCS#8 key and the dashboard's CA, in DER. The agent exits when any is missing or malformed. |
+| `LISTEN_ADDR` | no | Listen address, default `0.0.0.0:9090`. |
+| `DASHBOARD_URL` | no | Dashboard base URL. The outbound WebSocket to the dashboard needs this and `SYNC_TOKEN`; without either it is not started. The firewall rules also take the dashboard's WireGuard address from it. |
+| `SYNC_TOKEN` / `SYNC_TOKEN_FILE` | no | Token the outbound WebSocket presents to the dashboard. |
+| `DASHBOARD_PORT` | no | Dashboard panel port to open in nftables; set on the dashboard's own server only. |
+| `CA_PUBLIC_KEY` / `CA_PUBLIC_KEY_FILE` | no | Base64url Ed25519 public key that verifies agent certificates issued by the dashboard. |
+| `AGENT_VERSION` | no | Overrides the version the agent reports. |
+| `INSECURE_PLAIN_HTTP` | no | `1` serves plain HTTP. For local development only. |
+| `RUST_LOG` | no | Log filter. |
 
 ## Install
 
