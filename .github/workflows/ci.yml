@@ -234,7 +234,12 @@ jobs:
             if git show "$BASE_SHA:.github/scripts/ci/structure.py" > "$tmp/structure.py" 2>/dev/null \
               && git show "$BASE_SHA:.github/structure.json" > "$tmp/structure.json" 2>/dev/null; then
               echo "== judged with the base commit's script and exceptions"
-              python3 "$tmp/structure.py" --exceptions "$tmp/structure.json" || bad=1
+              # Only growth counts against the base's numbers: the list itself is the
+              # tree's copy to keep tidy. A base whose script does not know the option
+              # yet judges strictly, as it always did.
+              growth=""
+              if grep -q -e '--growth-only' "$tmp/structure.py"; then growth="--growth-only"; fi
+              python3 "$tmp/structure.py" $growth --exceptions "$tmp/structure.json" || bad=1
             else
               echo "::notice::the base commit has no structure check yet; this change introduces it"
             fi

@@ -102,12 +102,30 @@ expect_has "$(git -C "$ROOT" ls-files migrations | head -n 1)" rust
 expect_has setup-agent.sh shell
 expect_has update-agent.sh shell
 expect_has tests/run.sh shell
+expect_has internal/update/mod.rs rust shell
 expect_has .github/scripts/sign.py shell
 expect_has .github/workflows/reusable-rust-ci.yml rust shell workflows
 expect_has .github/workflows/reusable-shell-ci.yml shell workflows
 expect_has .github/workflows/reusable-workflow-lint.yml workflows shell
 expect_has .github/workflows/release.yml workflows shell
 expect_has .github/actions/cargo-audit/action.yml workflows shell
+
+# --- what carries the release key is watched by behaviour tests, not only by shellcheck --------
+# The two scripts verify a signature with a key they hold, and the binary holds the same
+# key. tests/run.sh runs the shell tests that sign with a throwaway key and the one that
+# compares the three pins, so every tracked file that holds a pin has to select the shell
+# suite, and the tests that watch the signature check have to exist for run.sh to find.
+for pinned in $(git -C "$ROOT" grep -l -e 'PUB_KEYS_B64 = \[' -e 'RELEASE_VERIFY_KEY_B64: &str' -- . ':!tests'); do
+	case " $(decide "$MAP" "$pinned") " in
+		*" shell "*) r=runs-the-shell-suite ;;
+		*) r="does-not-run-the-shell-suite" ;;
+	esac
+	check "$pinned holds the release key and runs the shell suite, with the tests that watch it" "runs-the-shell-suite" "$r"
+done
+for watcher in tests/setup-agent-signature.test.sh tests/update-agent-signature.test.sh tests/release-key-parity.test.sh; do
+	[[ -f "$ROOT/$watcher" ]] && r=present || r=missing
+	check "$watcher exists, so tests/run.sh runs it for a change to a file with the key" "present" "$r"
+done
 
 # --- what watches the CI cannot be left unwatched ---------------------------------
 # The wiring tests live in the shell suite. Every path that can change what the
