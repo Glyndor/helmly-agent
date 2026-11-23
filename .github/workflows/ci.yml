@@ -30,7 +30,7 @@ name: CI
 # Order, cheapest first, so a failure stops the dearer work:
 #   decide, dco                         seconds
 #   workflow-lint, shell                about 20 seconds
-#   rust (fmt and clippy, then tests, then coverage)
+#   rust (fmt and clippy, then the tests once, run under coverage)
 # The dependency audit is not behind those gates: it is a security analysis and
 # runs whatever the functional checks do.
 # A job behind a failed gate is skipped, and the pull request is red because of

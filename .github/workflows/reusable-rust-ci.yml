@@ -6,10 +6,13 @@ name: Rust CI (reusable)
 # is what lets a required check report instead of leaving a pull request waiting
 # for a check that never started.
 #
-# Order is cheapest first: `Format & lint` (rustfmt, then clippy), then `Test`,
-# then `Coverage`. Each one needs the one before, so a lint failure never pays
-# for a test build and a test failure never pays for an instrumented rebuild.
-# (Measured over 21 runs: lint 80 s, test 116 s, coverage 122 s.)
+# Order is cheapest first: `Format & lint` (rustfmt, then clippy), then the
+# tests, so a lint failure never pays for a test build. The tests run once. When
+# a coverage threshold is given (pull requests) `Coverage` runs them under
+# instrumentation and fails on a failing test exactly as `cargo test` would, so
+# `Test` is skipped; with no threshold (the release gate) `Test` runs them
+# plain. Running both, as this workflow used to, built and ran the same suite
+# twice. (Measured over 21 runs: lint 80 s, test 116 s, coverage 122 s.)
 #
 # The toolchain is whatever `rust-toolchain.toml` names. Nothing here chooses
 # one, so there is no second place for it to drift.
@@ -75,7 +78,7 @@ jobs:
   test:
     name: Test
     needs: lint
-    if: ${{ inputs.run != 'false' }}
+    if: ${{ inputs.run != 'false' && inputs.coverage-threshold == 0 }}
     runs-on: ubuntu-latest
     # Measured 116 s mean, 163 s worst over 21 runs.
     timeout-minutes: 20
@@ -102,7 +105,7 @@ jobs:
 
   coverage:
     name: Coverage
-    needs: test
+    needs: lint
     if: ${{ inputs.run != 'false' && inputs.coverage-threshold > 0 }}
     runs-on: ubuntu-latest
     # Measured 122 s mean, 186 s worst over 21 runs.

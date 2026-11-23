@@ -506,6 +506,17 @@ def check_write_token(findings: list) -> None:
 				findings.append(f"{path.name}: job {job_id!r} can write to Actions")
 
 
+def check_tests_run_once(findings: list) -> None:
+	"""The Rust suite builds and runs the tests once: Test only without a threshold, Coverage after lint."""
+	jobs = load_yaml(WORKFLOWS / "reusable-rust-ci.yml")["jobs"]
+	if "inputs.coverage-threshold == 0" not in str(jobs.get("test", {}).get("if", "")):
+		findings.append("reusable-rust-ci.yml: the Test job must run only when there is no coverage threshold, or the suite is built and run twice")
+	if jobs.get("coverage", {}).get("needs") != "lint":
+		findings.append("reusable-rust-ci.yml: Coverage must need only the lint job, which is the cheap gate before the one build of the tests")
+	if jobs.get("test", {}).get("needs") != "lint":
+		findings.append("reusable-rust-ci.yml: Test must need the lint job")
+
+
 def check_suite_jobs_start(findings: list) -> None:
 	"""Each suite job starts even if the plan failed, and skips only on an explicit `false`."""
 	jobs = load_yaml(WORKFLOWS / "ci.yml")["jobs"]
@@ -539,6 +550,7 @@ def main() -> int:
 		check_gate(findings)
 		check_write_token(findings)
 		check_suite_jobs_start(findings)
+		check_tests_run_once(findings)
 		check_event_values_via_env(findings)
 		check_switches(findings)
 		check_shape(findings)

@@ -463,4 +463,19 @@ sabotage ci.yml '  shell:
     if: \${{ !cancelled() && needs.decide.outputs.shell == 'true' }}"
 caught "a suite that runs only on an explicit true is caught" "ci.yml: job 'shell' runs only on an explicit true; a missing plan must run it"
 
+# --- the tests are built and run once ------------------------------------------------
+fresh_copy
+sed -i "s/    if: \${{ inputs.run != 'false' \&\& inputs.coverage-threshold == 0 }}/    if: \${{ inputs.run != 'false' }}/" "$WORK/tree/.github/workflows/reusable-rust-ci.yml"
+caught "a Test job that runs beside Coverage is caught" "the Test job must run only when there is no coverage threshold, or the suite is built and run twice"
+
+fresh_copy
+python3 - "$WORK/tree/.github/workflows/reusable-rust-ci.yml" << 'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+s = s.replace("    name: Coverage\n    needs: lint\n", "    name: Coverage\n    needs: test\n", 1)
+open(p, "w").write(s)
+PY
+caught "a Coverage job that waits for Test is caught" "Coverage must need only the lint job"
+
 exit "$fail"
