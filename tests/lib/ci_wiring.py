@@ -88,68 +88,128 @@ def load_yaml(path: Path) -> dict:
 
 
 PR_ONLY = "${{ github.event_name == 'pull_request' }}"
-EVENT_NAME = re.compile(r"^\$\{\{ github\.event_name == 'pull_request' && '([^']+)' \|\| format\('([^']*)\{0\}([^']*)', github\.event_name\) \}\}$")
+# The one `name:` expression ci.yml uses, with what it resolves to for each
+# event and base branch. Every other `name:` with an expression is a finding
+# unless it is a matrix name this file can expand.
+GATE_NAME = (
+	"${{ github.event_name == 'pull_request' && (github.event.pull_request.base.ref == 'main' && 'ci-gate (main)' || 'ci-gate')"
+	" || format('ci-gate ({0})', github.event_name) }}"
+)
+MATRIX_REF = re.compile(r"\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\s*\}\}")
 
 
-def triggers(doc: dict) -> set:
-	"""The events a workflow runs on. YAML 1.1 reads the key `on` as the boolean True."""
+def triggers(doc: dict) -> dict:
+	"""event -> the base branches it is limited to ('*' for no limit). The key `on` is the boolean True in YAML 1.1."""
 	on = doc.get("on", doc.get(True)) or {}
 	if isinstance(on, str):
-		return {on}
-	return set(on)
-
-
-def job_name(job_id: str, job: dict, event: str) -> str:
-	"""The name a job's check carries for an event. Knows the one expression ci.yml uses."""
-	raw = str(job.get("name", job_id))
-	match = EVENT_NAME.match(raw)
-	if match:
-		return match.group(1) if event == "pull_request" else f"{match.group(2)}{event}{match.group(3)}"
-	return raw
-
-
-def producers() -> dict:
-	"""Check name -> the set of (workflow file, event) that produce it.
-
-	A job with `if: github.event_name == 'pull_request'` produces on that event
-	only. A reusable workflow counts through the job that calls it. Reusable and
-	composite files themselves produce nothing: they run only when called.
-	"""
-	found: dict = {}
-	for path in workflow_files():
-		doc = load_yaml(path)
-		for event in sorted(triggers(doc) - {"workflow_call"}):
-			for job_id, job in (doc.get("jobs") or {}).items():
-				if str(job.get("if", "")).strip() == PR_ONLY and event != "pull_request":
-					continue
-				caller = job_name(job_id, job, event)
-				uses = str(job.get("uses", ""))
-				if uses.startswith("./.github/workflows/"):
-					inner = load_yaml(ROOT / uses[2:]).get("jobs") or {}
-					names = [f"{caller} / {inner_job.get('name', inner_id)}" for inner_id, inner_job in inner.items()]
-				else:
-					names = [caller]
-				for name in names:
-					found.setdefault(name, set()).add((path.name, event))
+		return {on: ["*"]}
+	if isinstance(on, list):
+		return {event: ["*"] for event in on}
+	found = {}
+	for event, config in on.items():
+		branches = ["*"]
+		if event == "pull_request" and isinstance(config, dict) and config.get("branches"):
+			branches = list(config["branches"])
+		found[event] = branches
 	return found
 
 
-def check_required(findings: list) -> None:
-	"""Each required check is produced by exactly one workflow on exactly one event.
+def expand_name(raw: str, job: dict, event: str, base: str) -> list:
+	"""The names a job's check carries, or [] when the expression cannot be resolved."""
+	if "${{" not in raw:
+		return [raw]
+	if raw == GATE_NAME:
+		if event == "pull_request":
+			return ["ci-gate (main)" if base == "main" else "ci-gate"]
+		return [f"ci-gate ({event})"]
+	matrix = ((job.get("strategy") or {}).get("matrix")) or {}
+	keys = set(MATRIX_REF.findall(raw))
+	if not keys or "${{" in MATRIX_REF.sub("", raw) or not isinstance(matrix, dict):
+		return []
+	axes = {k: v for k, v in matrix.items() if k not in ("include", "exclude")}
+	if any(not isinstance(v, list) for v in axes.values()) or (isinstance(matrix.get("include"), str)):
+		return []
+	combos = [dict()] if axes else []
+	for key, values in axes.items():
+		combos = [dict(c, **{key: v}) for c in combos for v in values]
+	combos += [dict(c) for c in (matrix.get("include") or []) if isinstance(c, dict)]
+	names = []
+	for combo in combos:
+		if not keys <= set(combo):
+			return []
+		names.append(MATRIX_REF.sub(lambda m: str(combo[m.group(1)]), raw))
+	return names
 
-	A name two events share lets the result of one satisfy the requirement of the
-	other: the push run of develop carries the same commit as the promotion pull
-	request into main, and its plan looked at the diff of that push only.
+
+def emitted(path_name: str, job_id: str, job: dict, event: str, base: str, prefix: str, problems: list) -> list:
+	"""Names one job makes appear for one event, a skipped job included.
+
+	A job whose `if` is false still reports its check, and GitHub counts a
+	skipped check as passed, so a skipped job is not "emitting nothing". A skipped
+	caller of a reusable workflow reports its own name and none of the inner ones.
+	"""
+	raw = str(job.get("name", job_id))
+	names = expand_name(raw, job, event, base)
+	if not names:
+		problems.append(f"{path_name}: job {job_id!r} has a name with an expression this validator cannot resolve: {raw!r}")
+		names = [raw]
+	callers = [prefix + n for n in names]
+	uses = str(job.get("uses", ""))
+	skipped_here = str(job.get("if", "")).strip() == PR_ONLY and event != "pull_request"
+	if uses.startswith("./.github/workflows/") and not skipped_here:
+		out = []
+		inner_doc = load_yaml(ROOT / uses[2:])
+		for inner_id, inner_job in (inner_doc.get("jobs") or {}).items():
+			for caller in callers:
+				out += emitted(uses, inner_id, inner_job, event, base, caller + " / ", problems)
+		return out
+	if uses and not uses.startswith("./"):
+		problems.append(f"{path_name}: job {job_id!r} calls the remote workflow {uses!r}, whose check names this validator cannot see; callers: {callers}")
+	return callers
+
+
+def producers() -> tuple:
+	"""(check name -> set of (workflow, event, base branch), problems found while resolving names)."""
+	found: dict = {}
+	problems: list = []
+	for path in workflow_files():
+		doc = load_yaml(path)
+		for event, bases in triggers(doc).items():
+			if event == "workflow_call":
+				continue
+			for base in bases:
+				for job_id, job in (doc.get("jobs") or {}).items():
+					for name in emitted(path.name, job_id, job, event, base, "", problems):
+						found.setdefault(name, set()).add((path.name, event, base))
+	return found, sorted(set(problems))
+
+
+def check_required(findings: list) -> None:
+	"""Each required check is produced by exactly one workflow and one event, for the base it guards.
+
+	The push run of develop and the promotion pull request into main share a
+	commit, and a skipped job still reports its name and counts as passed, so a name
+	two events (or two bases with different plans) share lets one result satisfy
+	the other's requirement. Jobs with an `if` that skips them are counted.
 	"""
 	required = json.loads((ROOT / ".github" / "required-checks.json").read_text(encoding="utf-8"))
-	made = producers()
+	made, _ = producers()
 	for branch, names in required.items():
 		for name in names:
-			who = made.get(name, set())
-			if not any(event == "pull_request" for _, event in who):
+			relevant = {(wf, ev) for wf, ev, base in made.get(name, set()) if ev != "pull_request" or base in (branch, "*")}
+			if not any(ev == "pull_request" for _, ev in relevant):
 				findings.append(f"required check on {branch} is emitted by no workflow: {name!r}")
-			elif len(who) > 1:
-				findings.append(f"required check {name!r} on {branch} is produced by more than one workflow or event: {sorted(who)}")
+			elif len(relevant) > 1:
+				findings.append(f"required check {name!r} on {branch} is produced by more than one workflow or event: {sorted(relevant)}")
+	names_by_branch = {name: branch for branch, names in required.items() for name in names}
+	if len(names_by_branch) != sum(len(names) for names in required.values()):
+		findings.append("a check name is required on both develop and main; the two bases carry different plans, so each ruleset needs its own name")
+
+
+def check_names(findings: list) -> None:
+	"""Fail closed on names: an expression this file cannot resolve could equal a required name."""
+	_, problems = producers()
+	findings.extend(problems)
 
 
 def check_layout(findings: list) -> None:
@@ -225,9 +285,27 @@ def check_switches(findings: list) -> None:
 		findings.append("ci.yml: the Rust suite is called without a positive coverage-threshold, so rust / Coverage would skip and report success")
 
 
+def check_triggers(findings: list) -> None:
+	"""A retargeted pull request must run again, and a fork's `develop` must not pass main-guard."""
+	for name in ("ci.yml", "main-guard.yml"):
+		doc = load_yaml(WORKFLOWS / name)
+		on = doc.get("on", doc.get(True)) or {}
+		types = set(((on.get("pull_request") or {}).get("types")) or [])
+		if "edited" not in types:
+			findings.append(f"{name}: pull_request must list the type `edited`, which is what a change of base branch sends, or a retargeted pull request keeps its old plan and gate name")
+	guard = load_yaml(WORKFLOWS / "main-guard.yml")["jobs"].get("develop-only", {})
+	steps = guard.get("steps") or [{}]
+	env = steps[-1].get("env") or {}
+	run = str(steps[-1].get("run", ""))
+	if env.get("HEAD_REPO") != "${{ github.event.pull_request.head.repo.full_name }}" or env.get("THIS_REPO") != "${{ github.repository }}" or '"$HEAD_REPO" != "$THIS_REPO"' not in run:
+		findings.append("main-guard.yml: develop-only must compare the head repository with this repository, since a fork can have a branch called develop")
+
+
 def check_gate(findings: list) -> None:
 	"""`ci-gate` runs always and sees every other job of ci.yml."""
 	jobs = load_yaml(WORKFLOWS / "ci.yml")["jobs"]
+	if (jobs.get("ci-gate") or {}).get("name") != GATE_NAME:
+		findings.append("ci.yml: ci-gate must carry the known name expression, which gives it a different name for each event and for a base of main")
 	gate = jobs.get("ci-gate")
 	if gate is None:
 		findings.append("ci.yml has no ci-gate job")
@@ -333,8 +411,10 @@ def main() -> int:
 	try:
 		check_required(findings)
 		check_layout(findings)
+		check_names(findings)
 		check_suites_consumed(findings)
 		check_reusables_honour_run(findings)
+		check_triggers(findings)
 		check_gate(findings)
 		check_switches(findings)
 		check_shape(findings)

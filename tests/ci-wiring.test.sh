@@ -215,7 +215,7 @@ sabotage ci.yml '    timeout-minutes: 5
 caught "a workflow with a key twice is refused by the parser" "duplicate key 'timeout-minutes'"
 
 fresh_copy
-sabotage ci.yml "    name: \${{ github.event_name == 'pull_request' && 'ci-gate' || format('ci-gate ({0})', github.event_name) }}" "    name: ci-gate"
+sabotage ci.yml "    name: \${{ github.event_name == 'pull_request' && (github.event.pull_request.base.ref == 'main' && 'ci-gate (main)' || 'ci-gate') || format('ci-gate ({0})', github.event_name) }}" "    name: ci-gate"
 caught "a ci-gate named the same on push and pull_request is caught" "required check 'ci-gate' on develop is produced by more than one workflow or event"
 
 fresh_copy
@@ -252,5 +252,87 @@ sabotage ci.yml '            if [ "$BASE_REF" = main ]; then
             fi
 ' ''
 caught "a plan step that stops running every suite for a base of main is caught" "the plan step must answer \`true\` for every suite when the pull request's base is main"
+
+# --- names: a skipped job reports its name too, and an expression is never trusted -----------------
+fresh_copy
+sabotage ci.yml "    name: \${{ github.event_name == 'pull_request' && (github.event.pull_request.base.ref == 'main' && 'ci-gate (main)' || 'ci-gate') || format('ci-gate ({0})', github.event_name) }}" "    name: \${{ github.event_name == 'pull_request' && 'ci-gate' || format('ci-gate ({0})', github.event_name) }}"
+caught "a gate named alike for a base of develop and a base of main is caught" "ci-gate must carry the known name expression"
+
+fresh_copy
+sabotage ci.yml '    types: [opened, synchronize, reopened, edited]' '    types: [opened, synchronize, reopened]'
+caught "a ci.yml that does not rerun when the base of a pull request changes is caught" "ci.yml: pull_request must list the type \`edited\`"
+
+fresh_copy
+sabotage main-guard.yml '    types: [opened, synchronize, reopened, edited]' '    types: [opened, synchronize, reopened]'
+caught "a main-guard that does not rerun when the base changes is caught" "main-guard.yml: pull_request must list the type \`edited\`"
+
+fresh_copy
+sabotage main-guard.yml 'if [ "$HEAD_REF" != "develop" ] || [ "$HEAD_REPO" != "$THIS_REPO" ]; then' 'if [ "$HEAD_REF" != "develop" ]; then'
+caught "a main-guard that accepts any repository's develop is caught" "develop-only must compare the head repository with this repository"
+
+fresh_copy
+python3 - "$WORK/tree/.github/workflows/ci.yml" << 'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+s = s.replace("    # Pull requests only: the check reads the commits between the base and the\n    # head, and a push has no base.\n    if: ${{ github.event_name == 'pull_request' }}\n", "", 1)
+open(p, "w").write(s)
+PY
+caught "a pull-request-only job that also runs on push, producing a required name there, is caught" "required check 'dco / Signed-off-by present on every commit' on develop is produced by more than one workflow or event"
+
+fresh_copy
+sabotage codeql.yml '    name: Analyze (${{ matrix.language }})' '    name: ${{ github.workflow }} (${{ matrix.language }})'
+caught "a job name with an expression the validator cannot resolve is caught" "has a name with an expression this validator cannot resolve"
+
+fresh_copy
+sabotage reusable-dco.yml '    name: Signed-off-by present on every commit' '    name: ${{ github.job }}'
+caught "an expression in the name of an inner job of a reusable workflow is caught" "has a name with an expression this validator cannot resolve"
+
+fresh_copy
+python3 - "$WORK/tree/.github/workflows/codeql.yml" << 'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+s += "\n  impostor:\n    name: ${{ matrix.n }}\n    runs-on: ubuntu-latest\n    strategy:\n      matrix:\n        n: [ci-gate]\n    steps:\n      - run: echo hi\n"
+open(p, "w").write(s)
+PY
+caught "a matrix job whose resolved name equals a required name is caught" "required check 'ci-gate' on develop is produced by more than one workflow or event"
+
+fresh_copy
+python3 - "$WORK/tree/.github/workflows/codeql.yml" << 'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+s += "\n  remote:\n    uses: someone/else/.github/workflows/x.yml@0123456789012345678901234567890123456789\n"
+open(p, "w").write(s)
+PY
+caught "a call to a remote reusable workflow, whose check names cannot be seen, is caught" "calls the remote workflow"
+
+fresh_copy
+python3 - "$WORK/tree" << 'PY'
+import json, sys
+root = sys.argv[1]
+open(root + "/.github/workflows/reusable-wrap.yml", "w").write(
+	"name: wrap\non:\n  workflow_call:\npermissions: {}\njobs:\n  b:\n    uses: ./.github/workflows/reusable-dco.yml\n"
+)
+open(root + "/.github/workflows/extra.yml", "w").write(
+	"name: extra\non:\n  pull_request:\n    branches: [develop]\npermissions: {}\njobs:\n  a:\n    uses: ./.github/workflows/reusable-wrap.yml\n"
+)
+req = json.load(open(root + "/.github/required-checks.json"))
+req["develop"].append("a / b / Signed-off-by present on every commit")
+json.dump(req, open(root + "/.github/required-checks.json", "w"))
+PY
+out="$(python3 "$WORK/tree/tests/lib/ci_wiring.py" 2>&1 || true)"
+check "a reusable workflow called from a reusable workflow is entered, so its names are seen" "no" "$(grep -qF "emitted by no workflow: 'a / b / Signed-off-by" <<< "$out" && echo yes || echo no)"
+
+fresh_copy
+python3 - "$WORK/tree/.github/required-checks.json" << 'PY'
+import json, sys
+p = sys.argv[1]
+req = json.load(open(p))
+req["main"] = ["ci-gate", "develop-only"]
+json.dump(req, open(p, "w"))
+PY
+caught "one check name required on both bases, which carry different plans, is caught" "a check name is required on both develop and main"
 
 exit "$fail"

@@ -31,8 +31,12 @@ name: CI
 on:
   push:
     branches: [develop]
+  # `edited` is what GitHub sends when the base branch of a pull request is
+  # changed: without it a pull request retargeted from develop to main would keep
+  # the narrow plan it had, and the name of its gate (see ci-gate) would not move.
   pull_request:
     branches: [develop, main]
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
@@ -178,12 +182,14 @@ jobs:
   # so a pull request cannot rewrite the judge of its own checks (the wiring
   # test holds the rest of this in place).
   ci-gate:
-    # The name carries the event unless it is a pull request. `ci.yml` also runs
-    # on a push to develop, whose plan looked at the diff of that push only, and
-    # the promotion pull request from develop into main points at the same
-    # commit: a gate named alike on both events would let the push run satisfy
-    # the requirement of the pull request. Only `ci-gate` itself is required.
-    name: ${{ github.event_name == 'pull_request' && 'ci-gate' || format('ci-gate ({0})', github.event_name) }}
+    # The name says which gate this is. `ci.yml` also runs on a push to develop,
+    # whose plan looked at the diff of that push only, and the promotion pull
+    # request from develop into main points at the same commit: a gate named
+    # alike on both events would let the push run satisfy the pull request. A
+    # pull request into develop is planned by its diff and one into main runs
+    # every suite, so the two bases carry different names and each ruleset
+    # requires its own: `ci-gate` for develop, `ci-gate (main)` for main.
+    name: ${{ github.event_name == 'pull_request' && (github.event.pull_request.base.ref == 'main' && 'ci-gate (main)' || 'ci-gate') || format('ci-gate ({0})', github.event_name) }}
     needs: [decide, dco, workflow-lint, shell, rust, audit]
     if: ${{ always() }}
     runs-on: ubuntu-latest

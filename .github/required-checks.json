@@ -4,7 +4,7 @@
     "dco / Signed-off-by present on every commit"
   ],
   "main": [
-    "ci-gate",
+    "ci-gate (main)",
     "develop-only"
   ]
 }
