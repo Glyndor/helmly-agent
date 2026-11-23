@@ -168,7 +168,7 @@ CI is split by responsibility rather than gathered in one file:
 |---|---|
 | `ci.yml` | on a pull request into `develop` or `main`, and on a push to `develop`: the plan (`decide`), DCO, workflow lint, the shell suite, the Rust suite (rustfmt and clippy, then the tests once, run under coverage), the dependency audit, the structure check, the pins check, and `ci-gate`, the check a pull request must pass (see below) |
 | `codeql.yml` | CodeQL analysis of the workflows and the Rust code, on pull requests and pushes to `develop` and `main`, and weekly |
-| `wiring-guard.yml` | on a pull request into `develop` or `main` and in the merge queue: the wiring validator of the base commit runs on the `.github` of the change, which is written into a directory as files and never run (see below) |
+| `wiring-guard.yml` | on a pull request into `develop` or `main`: the wiring validator of the base commit runs on the `.github` of the change, which is written into a directory as files and never run (see below) |
 | `audit.yml` | the weekly `cargo audit` of the lockfile of `main` and of `develop`, taken out of git as data, for advisories published while nothing is pushed (`cargo deny` runs in the `audit` job of `ci.yml`) |
 | `freshness.yml` | weekly: fails when Dependabot has gone quiet |
 | `dependabot-security-watch.yml` | lists Dependabot security pull requests stuck against `main` |
@@ -202,7 +202,8 @@ CodeQL rule.
 change that edits a workflow and the test that guards it would validate itself.
 `wiring-guard.yml` runs on `pull_request_target`, which GitHub reads from the base
 branch, with a read-only token and no secret. It checks out the base, writes the
-`.github` of the change (`refs/pull/<n>/merge`, or the commit of the merge group) into
+`.github` of the change (`refs/pull/<n>/merge`, after checking that its second parent is
+the head of the event, since GitHub makes that ref in the background) into
 a directory with `tests/lib/ci_wiring_extract.py`, which refuses links, submodules and
 oversized files, and runs `python3 -I tests/lib/ci_wiring.py` of the base on it. Nothing
 of the change is run, imported or sourced, and the tables of the contract are the

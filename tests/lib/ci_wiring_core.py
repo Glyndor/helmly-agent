@@ -74,6 +74,14 @@ GATE_NAME = (
 )
 
 
+# The name expression of the guard of the base, resolved for each base. Its trigger lists
+# the bases, so the third answer is a name no ruleset requires.
+GUARD_NAME = (
+	"${{ github.event.pull_request.base.ref == 'develop' && 'wiring-guard' ||"
+	" (github.event.pull_request.base.ref == 'main' && 'wiring-guard (main)' || 'wiring-guard (other base)') }}"
+)
+
+
 MATRIX_REF = re.compile(r"\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\s*\}\}")
 
 
@@ -87,7 +95,7 @@ def triggers(doc: dict) -> dict:
 	found = {}
 	for event, config in on.items():
 		branches = ["*"]
-		if event == "pull_request" and isinstance(config, dict) and config.get("branches"):
+		if event in ("pull_request", "pull_request_target") and isinstance(config, dict) and config.get("branches"):
 			branches = list(config["branches"])
 		found[event] = branches
 	return found
@@ -103,6 +111,10 @@ def expand_name(raw: str, job: dict, event: str, base: str) -> list:
 			lowered = base.lower()
 			return ["ci-gate" if lowered == "develop" else "ci-gate (main)" if lowered == "main" else "ci-gate (other base)"]
 		return [f"ci-gate ({event})"]
+	if raw == GUARD_NAME:
+		if event == "pull_request_target":
+			return ["wiring-guard" if base == "develop" else "wiring-guard (main)" if base == "main" else "wiring-guard (other base)"]
+		return []
 	matrix = ((job.get("strategy") or {}).get("matrix")) or {}
 	keys = set(MATRIX_REF.findall(raw))
 	if not keys or "${{" in MATRIX_REF.sub("", raw) or not isinstance(matrix, dict):

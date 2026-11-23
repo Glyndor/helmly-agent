@@ -9,7 +9,8 @@ attributes of the tree it archives (`export-ignore` drops a file from the copy t
 read while it stays in the repository, `export-subst` rewrites its text). This reads each
 entry with `git ls-tree` and `git cat-file blob`, which apply no attribute and run no filter
 or hook, and writes only regular files under the directory. A link, a submodule, a path that
-leaves the directory, or a file over the size limit makes it fail, and a failure leaves no
+leaves the directory, a name that is not valid UTF-8, an entry that appears twice, or a file
+over the size limit makes it fail, and a failure leaves no
 tree to validate.
 
 Exit 0, or 1 with one finding per line, or 2 when the commit cannot be read.
@@ -45,7 +46,12 @@ def main(argv: list) -> int:
 	for entry in filter(None, listing.split(b"\0")):
 		meta, _, raw = entry.partition(b"\t")
 		mode, kind, oid = meta.decode().split()
-		name = raw.decode("utf-8", errors="replace")
+		try:
+			name = raw.decode("utf-8")
+		except UnicodeDecodeError:
+			# Replacing the bytes that do not decode would let two different paths collide.
+			findings.append(f"{raw.decode('utf-8', errors='backslashreplace')}: the name is not valid UTF-8")
+			continue
 		if mode not in REGULAR or kind != "blob":
 			findings.append(f"{name}: is not a regular file (mode {mode}); a link or a submodule under .github is refused")
 			continue
@@ -58,7 +64,13 @@ def main(argv: list) -> int:
 			findings.append(f"{name}: is {size} bytes, over the limit of {LIMIT}")
 			continue
 		target.parent.mkdir(parents=True, exist_ok=True)
-		target.write_bytes(git("cat-file", "blob", oid))
+		try:
+			# Exclusive: an entry that is written twice is an error, not the last one winning.
+			with open(target, "xb") as out:
+				out.write(git("cat-file", "blob", oid))
+		except FileExistsError:
+			findings.append(f"{name}: appears twice in the tree")
+			continue
 		target.chmod(0o644)
 	for finding in findings:
 		print(f"::error::{finding}")
