@@ -259,12 +259,16 @@ sabotage ci.yml "    name: \${{ github.event_name == 'pull_request' && (github.e
 caught "a gate named alike for a base of develop and a base of main is caught" "ci-gate must carry the known name expression"
 
 fresh_copy
-sabotage ci.yml '    types: [opened, synchronize, reopened, edited]' '    types: [opened, synchronize, reopened]'
-caught "a ci.yml that does not rerun when the base of a pull request changes is caught" "ci.yml: pull_request must list the type \`edited\`"
+sabotage ci.yml '    types: [opened, synchronize, reopened]' '    types: [opened, synchronize, reopened, edited]'
+caught "a ci.yml that reruns on every title or body edit is caught" "ci.yml: pull_request types must be exactly ['opened', 'reopened', 'synchronize']"
+
+fresh_copy
+sabotage ci.yml '    types: [opened, synchronize, reopened]' '    types: [opened, reopened]'
+caught "a ci.yml that stops rerunning on a push to the branch is caught" "ci.yml: pull_request types must be exactly"
 
 fresh_copy
 sabotage main-guard.yml '    types: [opened, synchronize, reopened, edited]' '    types: [opened, synchronize, reopened]'
-caught "a main-guard that does not rerun when the base changes is caught" "main-guard.yml: pull_request must list the type \`edited\`"
+caught "a main-guard that does not rerun when the base changes is caught" "main-guard.yml: pull_request types must be exactly"
 
 fresh_copy
 sabotage main-guard.yml 'if [ "$HEAD_REF" != "develop" ] || [ "$HEAD_REPO" != "$THIS_REPO" ]; then' 'if [ "$HEAD_REF" != "develop" ]; then'

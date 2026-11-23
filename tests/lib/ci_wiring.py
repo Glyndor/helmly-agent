@@ -286,13 +286,20 @@ def check_switches(findings: list) -> None:
 
 
 def check_triggers(findings: list) -> None:
-	"""A retargeted pull request must run again, and a fork's `develop` must not pass main-guard."""
-	for name in ("ci.yml", "main-guard.yml"):
+	"""The events that rerun a pull request, and the guard against a fork's `develop`.
+
+	ci.yml reruns on opened, synchronize and reopened only. `edited` would rerun the
+	whole CI and cancel the one in flight each time a title or body is corrected; it
+	is not needed because the gate is named by base branch, so a retargeted pull
+	request has no check of the name its new ruleset requires until a run exists.
+	main-guard is cheap and also reruns on `edited`.
+	"""
+	for name, expected in (("ci.yml", {"opened", "synchronize", "reopened"}), ("main-guard.yml", {"opened", "synchronize", "reopened", "edited"})):
 		doc = load_yaml(WORKFLOWS / name)
 		on = doc.get("on", doc.get(True)) or {}
 		types = set(((on.get("pull_request") or {}).get("types")) or [])
-		if "edited" not in types:
-			findings.append(f"{name}: pull_request must list the type `edited`, which is what a change of base branch sends, or a retargeted pull request keeps its old plan and gate name")
+		if types != expected:
+			findings.append(f"{name}: pull_request types must be exactly {sorted(expected)}, not {sorted(types)}")
 	guard = load_yaml(WORKFLOWS / "main-guard.yml")["jobs"].get("develop-only", {})
 	steps = guard.get("steps") or [{}]
 	env = steps[-1].get("env") or {}

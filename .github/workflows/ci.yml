@@ -31,12 +31,16 @@ name: CI
 on:
   push:
     branches: [develop]
-  # `edited` is what GitHub sends when the base branch of a pull request is
-  # changed: without it a pull request retargeted from develop to main would keep
-  # the narrow plan it had, and the name of its gate (see ci-gate) would not move.
+  # No `edited` here, on purpose. It would rerun the whole CI, and cancel the one
+  # in flight, every time somebody fixes the title or the body of a pull request.
+  # It is not needed for safety either: the gate is named by base branch (see
+  # ci-gate), so a pull request retargeted from develop to main has no check
+  # called `ci-gate (main)` until a run for the new base exists, and one retargeted
+  # the other way has no `ci-gate`. Each ruleset requires its own name, so the
+  # pull request stays blocked, which fails closed without rerunning anything.
   pull_request:
     branches: [develop, main]
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
