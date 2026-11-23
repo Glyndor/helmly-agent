@@ -212,6 +212,24 @@ check "a docker:// reference is an image and is judged as one" "1" "$(run h4)"
 tree h5 "$(printf 'name: w\non: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n    container:\n      image: ubuntu:22.04\n    steps:\n      - run: echo\n')"
 check "the image inside a container mapping is read" "1" "$(run h5)"
 
+# The one image the allow list holds: the database service of the Rust suite. A service with
+# a tag and the digest passes; the same repository without a digest, and any other repository
+# with one, do not.
+DIGEST64=0000000000000000000000000000000000000000000000000000000000000000
+service() { printf 'name: w\non: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n    services:\n      db:\n        image: %s\n    steps:\n      - run: echo\n' "$1"; }
+tree h6 "$(service "postgres:18@sha256:$DIGEST64")"
+check "the postgres service image by digest passes, whatever its tag" "0" "$(run h6)"
+tree h7 "$(service "postgres@sha256:$DIGEST64")"
+check "the postgres image by digest passes without a tag" "0" "$(run h7)"
+tree h8 "$(service "postgres:18")"
+check "the postgres image by tag alone is still refused" "1" "$(run h8)"
+tree h9 "$(service "evil/postgres:18@sha256:$DIGEST64")"
+check "a repository that only ends in postgres is refused" "1" "$(run h9)"
+tree h10 "$(service "postgresql:18@sha256:$DIGEST64")"
+check "a repository whose name only starts with postgres is refused" "1" "$(run h10)"
+tree h11 "$(service "localhost:5000/postgres:18@sha256:$DIGEST64")"
+check "the postgres image of another registry is refused" "1" "$(run h11)"
+
 # --- the YAML, as GitHub reads it ------------------------------------------------------------
 tree i "$(printf 'name: w\non: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n      - { uses: evil/checkout@%s } # v1.2.3\n' "$(sha evil/checkout c1)")"
 check "a reference in flow style is read" "1" "$(run i)"

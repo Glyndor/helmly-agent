@@ -23,7 +23,8 @@ For each `uses: <owner>/<repo>[/<path>]@<sha> # vMAJOR.MINOR.PATCH`:
   repository (lowering the version of an action is a decision, not a side effect).
 
 An image (`image:`, `container:`, `docker://`) must be `<repository>@sha256:<64 hex>` with
-the repository on the allowed list, which holds none today. A local `./` reference is not
+the repository (its name without the tag) on the allowed list, which holds `postgres` only,
+for the database service of the Rust suite. A local `./` reference is not
 a pin and is not judged. Anything else, an expression included, is a finding.
 
 The base is read in two steps that stay apart: `git cat-file -e <base>^{commit}` says the
@@ -46,7 +47,9 @@ from pathlib import Path
 import yaml
 
 ALLOWED_OWNERS = {"actions", "github"}
-ALLOWED_IMAGES: set = set()
+# The official PostgreSQL image, for the service container the Rust suite starts so that the
+# authentication tests have a database to run against. The tag is free, the digest is not.
+ALLOWED_IMAGES = {"postgres"}
 REF_KEYS = {"uses", "image", "container"}
 ACTION = re.compile(r"^([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)(/[^@\s]*)?@(\S+)$")
 SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -145,12 +148,18 @@ def judge_action(here: str, value: str, comment: str, findings: list, pairs: dic
 	where[(f"{owner}/{repo}", version)].append((ref, here))
 
 
+def without_tag(name: str) -> str:
+	"""`postgres:18` is the repository `postgres`; a port in the host (`host:5000/x`) is not a tag."""
+	head, _, last = name.rpartition("/")
+	return (head + "/" if head else "") + last.split(":")[0]
+
+
 def judge_image(here: str, value: str, findings: list) -> None:
 	m = DIGEST.match(value)
 	if not m:
 		findings.append(f"{here}: image `{value}` is not <repository>@sha256:<64 hex digits>")
-	elif m.group(1) not in ALLOWED_IMAGES:
-		findings.append(f"{here}: image repository `{m.group(1)}` is not on the allowed list")
+	elif without_tag(m.group(1)) not in ALLOWED_IMAGES:
+		findings.append(f"{here}: image repository `{without_tag(m.group(1))}` is not on the allowed list")
 
 
 def one_pair_each(pairs: dict, where: dict, findings: list) -> None:
