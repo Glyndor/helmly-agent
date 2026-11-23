@@ -19,7 +19,8 @@
       ".github/scripts/**",
       ".github/workflows/**",
       ".github/actions/**",
-      ".github/required-checks.json"
+      ".github/required-checks.json",
+      ".github/structure.json"
     ],
     "workflows": [
       ".github/workflows/**",

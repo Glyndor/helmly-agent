@@ -199,6 +199,49 @@ jobs:
 
       - uses: ./.github/actions/cargo-audit
 
+  # File length and folder size, so the tree cannot drift back into a few giant
+  # files and crowded folders. It has no plan and runs on every pull request and
+  # push: a change that only adds documents can fill a folder, and one that only
+  # edits the exceptions can make `develop` red, so no path says it is safe to
+  # skip. It costs about two seconds. On a pull request the tree is judged twice,
+  # with the script and the exceptions of the BASE commit (a pull request cannot
+  # raise its own limit) and with those of the tree (a pull request cannot leave
+  # `develop` red for everyone after the merge), and both must pass. A base that
+  # has neither yet, the change that introduces them, is judged by the tree's.
+  structure:
+    needs: [dco, workflow-lint, shell]
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (needs.dco.result != 'failure' && needs.workflow-lint.result != 'failure' && needs.shell.result != 'failure')) }}
+    runs-on: ubuntu-latest
+    # Two seconds of work over about 130 files, plus a checkout.
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Judge the tree with the base copy and with the tree's copy
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -uo pipefail
+          bad=0
+          tmp="$RUNNER_TEMP/structure"
+          mkdir -p "$tmp"
+          if [ "$EVENT" = pull_request ]; then
+            if git show "$BASE_SHA:.github/scripts/ci/structure.py" > "$tmp/structure.py" 2>/dev/null \
+              && git show "$BASE_SHA:.github/structure.json" > "$tmp/structure.json" 2>/dev/null; then
+              echo "== judged with the base commit's script and exceptions"
+              python3 "$tmp/structure.py" --exceptions "$tmp/structure.json" || bad=1
+            else
+              echo "::notice::the base commit has no structure check yet; this change introduces it"
+            fi
+          fi
+          echo "== judged with this tree's script and exceptions"
+          python3 .github/scripts/ci/structure.py --exceptions .github/structure.json || bad=1
+          exit "$bad"
+
   # The one check the rulesets require, besides the DCO check. GitHub counts a
   # required check that was skipped as passed, so no suite is required by its
   # own name: this job runs always and fails unless the plan was made and every
@@ -217,7 +260,7 @@ jobs:
     # every suite, so the two bases carry different names and each ruleset
     # requires its own: `ci-gate` for develop, `ci-gate (main)` for main.
     name: ${{ github.event_name == 'pull_request' && (github.event.pull_request.base.ref == 'main' && 'ci-gate (main)' || 'ci-gate') || format('ci-gate ({0})', github.event_name) }}
-    needs: [decide, dco, workflow-lint, shell, rust, audit]
+    needs: [decide, dco, workflow-lint, shell, rust, audit, structure]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -229,6 +272,7 @@ jobs:
       SHELL_SUITE: ${{ needs.shell.result }}
       RUST: ${{ needs.rust.result }}
       AUDIT: ${{ needs.audit.result }}
+      STRUCTURE: ${{ needs.structure.result }}
       PLAN_WORKFLOWS: ${{ needs.decide.outputs.workflows }}
       PLAN_SHELL: ${{ needs.decide.outputs.shell }}
       PLAN_RUST: ${{ needs.decide.outputs.rust }}
@@ -250,11 +294,12 @@ jobs:
           suite shell "$SHELL_SUITE" "$PLAN_SHELL"
           suite rust "$RUST" "$PLAN_RUST"
           [ "$AUDIT" = success ] || fail "audit ended '$AUDIT' and has no plan to excuse it"
+          [ "$STRUCTURE" = success ] || fail "structure ended '$STRUCTURE' and has no plan to excuse it"
           if [ "$EVENT" = pull_request ]; then
             [ "$DCO" = success ] || fail "dco ended '$DCO'"
           fi
           printf '%-14s %-10s %s\n' job result plan
-          printf '%-14s %-10s %s\n' decide "$DECIDE" - dco "$DCO" - audit "$AUDIT" - \
+          printf '%-14s %-10s %s\n' decide "$DECIDE" - dco "$DCO" - audit "$AUDIT" - structure "$STRUCTURE" - \
             workflow-lint "$WORKFLOW_LINT" "${PLAN_WORKFLOWS:-empty}" shell "$SHELL_SUITE" "${PLAN_SHELL:-empty}" \
             rust "$RUST" "${PLAN_RUST:-empty}"
           [ "$bad" -eq 0 ] && echo "every suite passed or had nothing to check"
