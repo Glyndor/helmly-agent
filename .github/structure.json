@@ -1,0 +1,9 @@
+{
+  "files": {
+    "setup-agent.sh": {
+      "ceiling": 944,
+      "reason": "The installer is fetched and run as one file by the dashboard's installer, so it cannot be split across files without that fetch learning to pull more than one, which is a change in another repository and in the one link of the install chain that is not signature-checked. Tracked as #153; the ceiling can only go down."
+    }
+  },
+  "folders": {}
+}

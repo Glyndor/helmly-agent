@@ -21,6 +21,13 @@ name: Workflow lint (reusable)
 on:
   workflow_call:
     inputs:
+      run:
+        description: >-
+          `false` skips every job. Anything else, including an empty value from
+          a `decide` job that failed, runs them, so a broken decision never
+          switches a check off.
+        type: string
+        default: "true"
       shellcheck-version:
         description: Exact shellcheck release tag to install from koalaman/shellcheck for actionlint's embedded shellcheck pass; bumped via .github releases
         type: string
@@ -37,14 +44,14 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: workflow-lint-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   workflow-lint:
     name: workflow-lint
+    if: ${{ inputs.run != 'false' }}
     runs-on: ubuntu-latest
+    # Measured 13 s mean, 23 s worst over 21 runs.
+    timeout-minutes: 10
     env:
       ACTIONLINT_VERSION: v1.7.12
     steps:
@@ -52,7 +59,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version: "1.26"
 
@@ -102,7 +109,7 @@ jobs:
       - name: A job holding a secret must not install third-party tooling
         if: ${{ inputs.tooling-isolation }}
         run: |
-          python3 - <<'PY'
+          python3 -I - <<'PY'
           import glob
           import re
           import sys

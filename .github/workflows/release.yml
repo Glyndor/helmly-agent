@@ -9,6 +9,10 @@ on:
       tag:
         description: "Tag to release (e.g. v1.3.0)"
         required: true
+      dry_run:
+        description: "Build, sign with a throwaway key and verify, and publish nothing"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -18,25 +22,58 @@ jobs:
   # gate below passes, because a release runs once and its assets are
   # immutable. A mistake caught here costs a re-tag; the same mistake
   # caught after `gh release create` cannot be corrected at all.
+  #
+  # The tag is the one thing that arrives from outside: the name of a pushed
+  # tag, or what the person who started the run typed. It is checked here
+  # against the shape of a release tag and leaves this job as an output; every
+  # other job takes it from that output and never reads the event. No job
+  # checks out a ref of its own: they all run at the commit of the run, and a
+  # run that publishes must be started from the tag (see the check below).
   verify:
     name: Verify tag matches crate version
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      # Only a rehearsal falls back to the commit of the run. A run that publishes
+      # takes what `commit` emitted, and an empty value is refused by the jobs after.
+      sha: ${{ inputs.dry_run && github.sha || steps.commit.outputs.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           persist-credentials: false
 
       - name: Validate tag format
+        id: tag
         env:
           TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
-          if ! echo "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "::error::Tag '${TAG}' does not match required format v<major>.<minor>.<patch>."
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::the tag is not v<major>.<minor>.<patch>"
             exit 1
           fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: This commit is the one the tag points at
+        id: commit
+        # The tag is resolved as refs/tags/<tag>, never as a bare name that could be
+        # a branch, and the commit it points at (peeled) has to be the commit this
+        # run is at. That commit is emitted here, and it is the one every later job
+        # runs at and the one the tag must still point at when the release is made.
+        # A rehearsal builds whatever it was started on and publishes nothing, so it
+        # takes the commit of the run and needs no tag.
+        if: ${{ !inputs.dry_run }}
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          RUN_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Assigned first, so that the exit status of the script is not hidden by echo.
+          sha="$(bash .github/scripts/release/resolve-tag.sh "$TAG" "$RUN_SHA")"
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::the tag did not resolve to a commit"; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
       - name: Tag must equal Cargo.toml version
         # This replaces the step that used to `sed` the version out of the
@@ -46,7 +83,7 @@ jobs:
         # the repository's own committed version wrong. The version bump is
         # a reviewed commit; the tag only names it.
         env:
-          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
           VERSION="${TAG#v}"
           CRATE_VERSION="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
@@ -75,7 +112,9 @@ jobs:
       - name: Tagged commit must be reachable from main
         # Releases are cut only from `main` (develop → main merge, then
         # tag). Refuse a tag pushed anywhere else, so code that never went
-        # through the promotion PR cannot be published.
+        # through the promotion PR cannot be published. A rehearsal publishes
+        # nothing and may run from any branch.
+        if: ${{ !inputs.dry_run }}
         run: |
           git fetch --unshallow --no-tags origin main 2>/dev/null \
             || git fetch --no-tags origin main
@@ -87,13 +126,12 @@ jobs:
 
       - name: Audit dependencies for known advisories
         # A RUSTSEC advisory in a pinned dependency must block publishing
-        # rather than wait for the weekly cron: the weekly run tells us
-        # about a release we already shipped. Flags are kept identical to
-        # `audit.yml` so the two gates cannot drift into disagreeing about
-        # what is acceptable; the one ignore is justified in `audit.toml`.
-        run: |
-          cargo install cargo-audit --version "=0.22.2" --locked
-          cargo audit --deny warnings --ignore RUSTSEC-2023-0071
+        # rather than wait for the weekly cron: the weekly run tells us about
+        # a release we already shipped. The action is the one the pull request
+        # gate and the weekly run use, so the three cannot disagree about what
+        # is acceptable; the ignores live in `.cargo/audit.toml` and
+        # `deny.toml`, each with its reachability argument.
+        uses: ./.github/actions/cargo-audit
 
   ci:
     needs: verify
@@ -101,13 +139,14 @@ jobs:
 
   build:
     name: Build ${{ matrix.arch }}
-    needs: ci
+    needs: [verify, ci]
     runs-on: ubuntu-latest
 
+    # Whoever compiles holds no authority over the release: no token to write, no
+    # identity to attest with, no secret. The attestation is made by its own job
+    # below, from the finished binaries.
     permissions:
       contents: read
-      id-token: write
-      attestations: write
 
     strategy:
       fail-fast: false
@@ -124,24 +163,17 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           persist-credentials: false
 
+      # No cache is restored or saved in this job: what it builds from is not
+      # taken from a cache that an earlier run could have written.
       - name: Install toolchain
+        # The toolchain `rust-toolchain.toml` pins, not whatever `stable` is on
+        # the day of the tag: a release is built with the compiler that the
+        # lint and test jobs of the same commit already used.
         run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+          rustup toolchain install
           rustup target add ${{ matrix.rust-target }}
-
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: rust-release-${{ matrix.arch }}-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: rust-release-${{ matrix.arch }}-${{ runner.os }}-
 
       - name: Install musl toolchain (x86_64)
         if: ${{ !matrix.use_cross }}
@@ -149,7 +181,7 @@ jobs:
 
       - name: Install cross (arm64)
         if: ${{ matrix.use_cross }}
-        run: cargo install cross --locked
+        run: cargo install cross --locked --version 0.2.5
 
       - name: Build agent (musl static)
         # `--locked` so the build resolves the reviewed lockfile instead of
@@ -169,146 +201,251 @@ jobs:
           cp "target/${{ matrix.rust-target }}/release/helmly-agent" \
              "helmly-agent-linux-${{ matrix.arch }}"
 
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: helmly-agent-linux-${{ matrix.arch }}
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: agent-${{ matrix.arch }}
           path: helmly-agent-linux-${{ matrix.arch }}
           retention-days: 1
 
+  # The provenance of what was built is attested here, by a job that compiles
+  # nothing: it downloads the finished binaries by name, requires exactly the two
+  # files that are expected, as regular files and not links, and attests those.
+  # A rehearsal publishes nothing and gets no attestation.
+  attest:
+    name: Attest the provenance of the binaries
+    needs: [verify, build]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: agent-x86_64
+          path: ${{ runner.temp }}/artifacts/x86_64
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: agent-arm64
+          path: ${{ runner.temp }}/artifacts/arm64
+
+      - name: Require exactly the two binaries
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/artifacts"
+          [ "$(find . -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort | tr '\n' ' ')" = "arm64 x86_64 " ] || { echo "::error::the artifacts directory must hold exactly arm64 and x86_64"; exit 1; }
+          for arch in x86_64 arm64; do
+            [ "$(find "$arch" -mindepth 1 -maxdepth 1 -printf '%f\n')" = "helmly-agent-linux-$arch" ] || { echo "::error::$arch must hold exactly helmly-agent-linux-$arch"; exit 1; }
+            if [ ! -f "$arch/helmly-agent-linux-$arch" ] || [ -L "$arch/helmly-agent-linux-$arch" ] || [ -L "$arch" ]; then
+              echo "::error::$arch/helmly-agent-linux-$arch is not a regular file"
+              exit 1
+            fi
+          done
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            ${{ runner.temp }}/artifacts/x86_64/helmly-agent-linux-x86_64
+            ${{ runner.temp }}/artifacts/arm64/helmly-agent-linux-arm64
+
+  # A rehearsal signs with a key made in the job and says so; the release key is
+  # not read here (no `secrets.` appears in this job), and nothing is published.
+  # It runs the same signing script on the same directories as the real release,
+  # then checks every signature against the throwaway public key with the same
+  # verifier, so a broken script or a changed asset name fails here and not at the
+  # tag. Start it from the Actions tab with dry_run set.
+  sign-dry-run:
+    name: Sign with a throwaway key (dry run)
+    needs: [verify, build]
+    if: ${{ inputs.dry_run }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: agent-x86_64
+          path: ${{ runner.temp }}/artifacts/x86_64
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: agent-arm64
+          path: ${{ runner.temp }}/artifacts/arm64
+
+      - name: Copy the installers out of the checkout into a folder of their own
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/installers"
+          for f in setup-agent.sh update-agent.sh; do
+            if [ ! -f "$f" ] || [ -L "$f" ]; then echo "::error::$f is not a regular file"; exit 1; fi
+            cp "$f" "$RUNNER_TEMP/installers/$f"
+          done
+
+      - name: Install the signing library from the pinned hashes
+        run: |
+          python3 -m venv "$RUNNER_TEMP/signvenv"
+          "$RUNNER_TEMP/signvenv/bin/python" -m pip install --quiet --require-hashes --only-binary=:all: -r "$GITHUB_WORKSPACE/.github/scripts/sign-requirements.txt"
+
+      - name: Make a throwaway key
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/signvenv/bin/python" -I - > "$RUNNER_TEMP/throwaway-key" <<'PY'
+          import base64
+          import os
+
+          from cryptography.hazmat.primitives import serialization
+          from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+          seed = os.urandom(32)
+          pub = Ed25519PrivateKey.from_private_bytes(seed).public_key().public_bytes(
+              serialization.Encoding.Raw, serialization.PublicFormat.Raw
+          )
+          print(base64.b64encode(seed).decode())
+          print(base64.b64encode(pub).decode())
+          PY
+          key="$(sed -n 1p "$RUNNER_TEMP/throwaway-key")"
+          pub="$(sed -n 2p "$RUNNER_TEMP/throwaway-key")"
+          rm -f "$RUNNER_TEMP/throwaway-key"
+          echo "::add-mask::$key"
+          {
+            echo "GLYNDOR_RELEASE_ED25519_KEY=$key"
+            echo "THROWAWAY_PUBLIC_KEY=$pub"
+          } >> "$GITHUB_ENV"
+          echo "Dry run: signing with a throwaway key made in this job. The release key is not read."
+
+      - name: Sign
+        env:
+          SIGN_PYTHON: ${{ runner.temp }}/signvenv/bin/python
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/release/sign-artifacts.sh" "$RUNNER_TEMP/artifacts" "$RUNNER_TEMP/installers" "$RUNNER_TEMP/release"
+
+      - name: Verify every signature against the throwaway key
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/release"
+          for f in helmly-agent-linux-x86_64 helmly-agent-linux-arm64 setup-agent.sh update-agent.sh SHA256SUMS; do
+            "$RUNNER_TEMP/signvenv/bin/python" -I "$GITHUB_WORKSPACE/.github/scripts/verify-release.py" "$f" "$THROWAWAY_PUBLIC_KEY"
+          done
+          sha256sum -c SHA256SUMS
+
   release:
     name: Publish release
-    needs: build
+    needs: [verify, build, attest]
+    if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
-
+    timeout-minutes: 20
+    # The signing key lives in this environment and nowhere else. The environment
+    # accepts runs of `main` and of `v*` tags only, which a branch edit cannot
+    # change: whoever can push a branch can start this workflow on it with their
+    # own copy of the scripts, and without the environment that copy would read
+    # the key. A rehearsal never reaches this job and uses a key it makes itself.
+    environment: release
     permissions:
       contents: write
 
-    env:
-      # The single source of truth for what this release publishes. Signing,
-      # verification, `SHA256SUMS` and `gh release create` all derive their
-      # file list from this one, and each derives `<f>.sig` from it rather
-      # than naming signatures separately.
-      #
-      # They used to carry four hand-written copies of the same list. That
-      # shape fails silently in one direction only, and it is the bad one:
-      # an asset added to `gh release create` but forgotten in the signing
-      # loop publishes unsigned, and every gate still passes, because each
-      # gate is checking its own copy of the list. Adding the installer
-      # scripts here is what made the divergence worth removing rather than
-      # documenting.
-      RELEASE_ARTIFACTS: >-
-        helmly-agent-linux-x86_64
-        helmly-agent-linux-arm64
-        setup-agent.sh
-        update-agent.sh
-
     steps:
-      # Signing lives here rather than in `build` on purpose. The build
-      # jobs install third-party tooling (`cargo install cross`,
-      # `apt-get install musl-tools`), and the standard's rule is that a
-      # job which installs third-party tooling holds no secrets. Under the
-      # old layout one compromised build script stood next to the org's
-      # release key. This job installs nothing but a hash-pinned virtualenv,
-      # so the key is only ever in the job that needs it.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-          persist-credentials: false
-
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          merge-multiple: true
-          path: dist
-
-      - name: Stage the installer scripts as release assets
-        # `setup-agent.sh` is the root of trust for an install: it pins the
-        # release key (`PUB_KEYS_B64`) that every later signature check
-        # uses. Until now it reached the host as a raw file on `main`,
-        # fetched with no signature, no checksum and no version, so the
-        # whole verification chain hung off an unauthenticated download.
-        # Publishing it here makes it an artifact of the tagged release
-        # like any other. Tracked in #181.
-        #
-        # `update-agent.sh` ships with it because the entry script hands
-        # over to it (`setup-agent.sh:201`) and, on the fetched path, the
-        # sibling it execs does not exist (#187). A consumer can only fetch
-        # what the release publishes.
-        #
-        # The copy comes from the checkout, which is at the tag, so what
-        # gets signed is the tagged content rather than a branch head.
-        working-directory: ${{ github.workspace }}
+      # Defence against an accident, not the gate: the environment is the gate.
+      # It runs before anything else, holds no secret, and refuses an event or a
+      # ref that a release does not start from.
+      - name: This run was started by a tag, or by hand from main or a tag
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
         run: |
           set -euo pipefail
-          cp setup-agent.sh update-agent.sh dist/
+          case "$EVENT:$REF" in
+            push:refs/tags/v* | workflow_dispatch:refs/tags/v* | workflow_dispatch:refs/heads/main) ;;
+            *) echo "::error::a release is not started by ${EVENT} on ${REF}"; exit 1 ;;
+          esac
 
-      - name: Create the signing virtualenv
-        # A fresh venv with `--require-hashes` so the pinned cryptography is
-        # the one that runs. Installing into the runner's system Python
-        # cannot honour a pin it is not allowed to overwrite, and a
-        # system-managed `cryptography` that pip can neither uninstall nor
-        # replace has broken releases in this org before.
+      # Signing lives here rather than in `build` on purpose. The build jobs
+      # install third-party tooling (`cargo install cross`, `apt-get install
+      # musl-tools`), and the standard's rule is that a job which installs
+      # third-party tooling holds no secrets. This job installs nothing but a
+      # hash-pinned virtualenv, so the key is only ever in the job that needs it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: This commit is the one the tag points at
+        env:
+          TAG: ${{ needs.verify.outputs.tag }}
+          RUN_SHA: ${{ github.sha }}
+          VERIFIED_SHA: ${{ needs.verify.outputs.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$VERIFIED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::verify did not hand over a commit"; exit 1; }
+          [ "$RUN_SHA" = "$VERIFIED_SHA" ] || { echo "::error::this run is at ${RUN_SHA} and verify checked ${VERIFIED_SHA}"; exit 1; }
+          bash .github/scripts/release/resolve-tag.sh "$TAG" "$VERIFIED_SHA" > /dev/null
+
+      # The artifacts are data. Each goes by name into its own folder of a
+      # directory outside the checkout that nothing else writes to, and the
+      # installers, which are code of the checkout, go into another. Nothing is
+      # merged, so a name in one cannot overwrite a file of another.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: agent-x86_64
+          path: ${{ runner.temp }}/artifacts/x86_64
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: agent-arm64
+          path: ${{ runner.temp }}/artifacts/arm64
+
+      - name: Copy the installers out of the checkout into a folder of their own
+        # `setup-agent.sh` is the root of trust for an install: it pins the
+        # release key that every later signature check uses. Published here, it
+        # is an asset of the tagged release like any other, and the copy comes
+        # from the checkout, which is at the tag, so what gets signed is the
+        # tagged content rather than a branch head. `update-agent.sh` ships with
+        # it because the entry script hands over to it and a consumer can only
+        # fetch what the release publishes.
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/installers"
+          for f in setup-agent.sh update-agent.sh; do
+            if [ ! -f "$f" ] || [ -L "$f" ]; then echo "::error::$f is not a regular file"; exit 1; fi
+            cp "$f" "$RUNNER_TEMP/installers/$f"
+          done
+
+      - name: Install the signing library from the pinned hashes
+        # A fresh venv with `--require-hashes` so the pinned cryptography is the
+        # one that runs. Installing into the runner's system Python cannot honour
+        # a pin it is not allowed to overwrite.
         #
         # Keep `pip install` and `--require-hashes` on ONE line. The
         # tooling-isolation check reads a `run:` block line by line, and its
-        # exemption marker only exempts the line it appears on, so wrapping
-        # this command across a continuation makes it read as an unpinned
-        # install inside a job that holds the release key. The wrap is not a
-        # cosmetic choice, it is the difference between passing the gate and
-        # evading it.
+        # exemption marker only exempts the line it appears on.
         run: |
           python3 -m venv "$RUNNER_TEMP/signvenv"
-          "$RUNNER_TEMP/signvenv/bin/python" -m pip install --quiet --require-hashes -r .github/scripts/sign-requirements.txt
+          "$RUNNER_TEMP/signvenv/bin/python" -m pip install --quiet --require-hashes --only-binary=:all: -r "$GITHUB_WORKSPACE/.github/scripts/sign-requirements.txt"
 
-      - name: Sign the release artifacts
+      - name: Sign
+        # The key is read from the environment by the script, never from an
+        # argument, so it does not appear in the runner's process table. The
+        # script refuses anything but the exact expected files before it reads
+        # the key, and exits non-zero when the secret is absent, so an unsigned
+        # asset is never published.
         env:
           GLYNDOR_RELEASE_ED25519_KEY: ${{ secrets.GLYNDOR_RELEASE_ED25519_KEY }}
-        working-directory: dist
-        run: |
-          set -euo pipefail
-          # The key is read from the environment, never argv, so it does not
-          # appear in the runner's process table. sign.py exits non-zero when
-          # the secret is absent, so an unsigned artifact is never published.
-          #
-          # The installer scripts are signed here too. Naming every file in
-          # one list rather than looping over architectures is deliberate:
-          # the set of published artifacts is no longer "one per arch", and
-          # a shape that only knows about arches is how a new asset ships
-          # unsigned without anyone noticing.
-          read -ra artifacts <<<"$RELEASE_ARTIFACTS"
-          for f in "${artifacts[@]}"; do
-            "$RUNNER_TEMP/signvenv/bin/python" "$GITHUB_WORKSPACE/.github/scripts/sign.py" "$f"
-          done
+          SIGN_PYTHON: ${{ runner.temp }}/signvenv/bin/python
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/release/sign-artifacts.sh" "$RUNNER_TEMP/artifacts" "$RUNNER_TEMP/installers" "$RUNNER_TEMP/release"
 
       - name: Verify signatures against the pinned install key
         run: |
           set -euo pipefail
           # Gate: the release must verify against the exact public key the
-          # installer and self-update pin, or a fresh install would reject it
-          # (the failure that shipped a broken v1.4.0). Fail here, before
-          # anything is uploaded or published.
-          #
-          # All three files still pin the key. What changed is the shape:
-          # #109 moved the two shell scripts to the two-slot PUB_KEYS_B64
-          # list, and this step kept grepping the pre-#109 spellings,
-          #
-          #   setup-agent.sh    RELEASE_VERIFY_KEY_B64="..."   gone
-          #   update-agent.sh   pub_b64 = "..."                gone
-          #
-          # so `pin_setup` and `pin_update` both came back empty and the
-          # step exited 1 on "no RELEASE_VERIFY_KEY_B64 pin found in
-          # setup-agent.sh". No release could be published, and each of the
-          # three files carries a comment saying this check keeps them in
-          # sync. A gate that cannot pass is not stricter than no gate, it
-          # is a gate nobody can satisfy.
-          #
-          # Both scripts embed the same Python literal, so one extractor
-          # reads slot 0 from either. Every pin must be found: an empty
-          # match is a pattern that rotted, not a key that is absent.
+          # installer and self-update pin, or a fresh install would reject it.
+          # Fail here, before anything is published. All three files pin the
+          # key in the two-slot PUB_KEYS_B64 list of the installer scripts and
+          # in the Rust constant; every pin must be found (an empty match is a
+          # pattern that rotted, not a key that is absent) and all must agree.
           slot0() {
             awk '/^PUB_KEYS_B64 = \[/{f=1;next} f && /^ *"[A-Za-z0-9+\/=]+",/{gsub(/[ ",]/,"");print;exit}' "$1"
           }
@@ -326,96 +463,37 @@ jobs:
             exit 1
           fi
           echo "installer/self-update pin: $pin_setup"
-          # Run through the pinned venv, not the runner's system Python:
-          # verify-release.py imports `cryptography`, and the whole point of
-          # the venv is that the release never depends on whatever version
-          # the runner image happens to carry.
-          #
-          # The installer scripts are verified here as well. What this
-          # proves is narrower than it looks, and the distinction matters:
-          # `setup-agent.sh` is checked against the key `setup-agent.sh`
-          # itself pins, so it establishes that the release is internally
-          # consistent, NOT that the script is authentic to whoever
-          # downloads it. A consumer's trust anchor has to be its own
-          # pinned copy of the key, one hop up. This gate catches a release
-          # signed with a key the shipped installer would reject; it cannot
-          # catch a shipped installer that pins an attacker's key, and
-          # nothing self-referential ever could.
-          read -ra artifacts <<<"$RELEASE_ARTIFACTS"
-          for f in "${artifacts[@]}"; do
-            "$RUNNER_TEMP/signvenv/bin/python" .github/scripts/verify-release.py \
-              "dist/${f}" "$pin_setup"
+          # `setup-agent.sh` is checked against the key it pins itself, so this
+          # establishes that the release is internally consistent, NOT that the
+          # script is authentic to whoever downloads it: a consumer's trust
+          # anchor has to be its own pinned copy of the key, one hop up.
+          cd "$RUNNER_TEMP/release"
+          for f in helmly-agent-linux-x86_64 helmly-agent-linux-arm64 setup-agent.sh update-agent.sh SHA256SUMS; do
+            "$RUNNER_TEMP/signvenv/bin/python" -I "$GITHUB_WORKSPACE/.github/scripts/verify-release.py" "$f" "$pin_setup"
           done
+          sha256sum -c SHA256SUMS
 
-      - name: Generate and sign SHA256SUMS
-        # A signed manifest of every published asset, so a consumer can
-        # check the whole set with one signature check rather than trusting
-        # each download separately. Generated from the files on disk, at
-        # the only moment their digests are knowable, never from a list
-        # typed into the workflow.
+      - name: The tag still points at the commit that was verified
+        # Signing takes minutes. A tag moved in that time must not turn what was
+        # signed into the release of another commit.
         env:
-          GLYNDOR_RELEASE_ED25519_KEY: ${{ secrets.GLYNDOR_RELEASE_ED25519_KEY }}
-        working-directory: dist
-        run: |
-          set -euo pipefail
-          read -ra artifacts <<<"$RELEASE_ARTIFACTS"
-          sha256sum "${artifacts[@]}" > SHA256SUMS
-          cat SHA256SUMS
-          "$RUNNER_TEMP/signvenv/bin/python" "$GITHUB_WORKSPACE/.github/scripts/sign.py" SHA256SUMS
-
-      - name: Every declared asset must exist before publishing
-        # Existence, not declaration. `gh release create` would happily
-        # publish a short set and the release is immutable afterwards, so
-        # assert the full set is on disk first.
-        working-directory: dist
-        run: |
-          set -euo pipefail
-          read -ra artifacts <<<"$RELEASE_ARTIFACTS"
-
-          # Guard first, because an empty RELEASE_ARTIFACTS makes every loop
-          # below iterate over nothing and report success. That is the exact
-          # shape this step exists to catch, so it must not be reachable
-          # through the step's own scaffolding.
-          if [ "${#artifacts[@]}" -lt 2 ]; then
-            echo "::error::RELEASE_ARTIFACTS lists ${#artifacts[@]} artifact(s); a release publishes at least the two binaries, so the variable is empty or malformed"
-            exit 1
-          fi
-
-          published=()
-          for f in "${artifacts[@]}"; do
-            published+=("$f" "${f}.sig")
-          done
-          published+=(SHA256SUMS SHA256SUMS.sig)
-
-          expected=$(( ${#artifacts[@]} * 2 + 2 ))
-          if [ "${#published[@]}" -ne "$expected" ]; then
-            echo "::error::derived ${#published[@]} files from ${#artifacts[@]} artifacts, expected ${expected}"
-            exit 1
-          fi
-
-          missing=0
-          for f in "${published[@]}"; do
-            if [ ! -s "$f" ]; then
-              echo "::error::release asset ${f} is missing or empty"
-              missing=1
-            fi
-          done
-          [ "$missing" -eq 0 ]
-
-          printf 'asserted %s files exist\n' "${#published[@]}"
+          TAG: ${{ needs.verify.outputs.tag }}
+          VERIFIED_SHA: ${{ needs.verify.outputs.sha }}
+        run: bash .github/scripts/release/resolve-tag.sh "$TAG" "$VERIFIED_SHA" > /dev/null
 
       - name: Create GitHub Release
+        # --verify-tag: the release is made for the tag that exists, and fails
+        # rather than create a tag of its own at the head of some branch.
+        working-directory: ${{ runner.temp }}/release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-        working-directory: dist
+          TAG: ${{ needs.verify.outputs.tag }}
         run: |
           set -euo pipefail
-          read -ra artifacts <<<"$RELEASE_ARTIFACTS"
-          upload=()
-          for f in "${artifacts[@]}"; do
-            upload+=("$f" "${f}.sig")
-          done
-          upload+=(SHA256SUMS SHA256SUMS.sig)
-          gh release create "$TAG" --generate-notes "${upload[@]}"
+          gh release create "$TAG" --verify-tag --generate-notes \
+            helmly-agent-linux-x86_64 helmly-agent-linux-x86_64.sig \
+            helmly-agent-linux-arm64 helmly-agent-linux-arm64.sig \
+            setup-agent.sh setup-agent.sh.sig \
+            update-agent.sh update-agent.sh.sig \
+            SHA256SUMS SHA256SUMS.sig

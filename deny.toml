@@ -9,9 +9,25 @@ all-features = true
 
 [advisories]
 version = 2
-# No ignores today, and that is NOT because RUSTSEC-2023-0071 went away.
+# Report an unmaintained crate wherever it sits in the graph, as cargo-audit
+# does. cargo-deny 0.22 narrowed its default to the crates the workspace
+# depends on directly (measured 2026-11-22: with the default,
+# `unsafe-libyaml`, which arrives through `serde_yaml_ng`, was no longer
+# reported and the ignore for it below was flagged as never encountered).
+# Leaving the default would have meant the two gates disagreeing about the
+# same crate, so this asks for the stricter reading explicitly.
+unmaintained = "all"
+# Two unmaintained advisories with no patched version are accepted below, for
+# the reasons and with the retirement conditions written out in
+# `.cargo/audit.toml`. cargo-deny reads its own file, so each tool needs its
+# own entry. The rest of this comment is about RUSTSEC-2023-0071 and
+# libsqlite3-sys, which cargo-audit ignores and cargo-deny does not need to:
+# both are in Cargo.lock and in no build graph.
+#
+# No ignore for RUSTSEC-2023-0071, and that is NOT because it went away.
 # It is still live and `rsa` 0.9.10 is still in Cargo.lock, alongside
-# sqlx-mysql, its only reverse-dependency. Measured on this commit:
+# sqlx-mysql, its only reverse-dependency. Measured before the ignore list
+# moved to `.cargo/audit.toml`, where cargo-audit now applies it:
 #
 #   $ cargo audit --deny warnings          # no --ignore
 #   error: 1 vulnerability found!          # RUSTSEC-2023-0071
@@ -26,10 +42,10 @@ version = 2
 #   $ cargo tree --target all -i sqlx-mysql    # nothing to print
 #
 # cargo-audit reads Cargo.lock as text, where both are present, so it
-# reports the advisory and audit.yml carries `--ignore RUSTSEC-2023-0071`
-# with the reachability argument written out in audit.toml.
+# reports the advisory, so `.cargo/audit.toml` carries the ignore with the
+# reachability argument written out.
 #
-# So this file needs no ignore and audit.yml does. That is not an
+# So this file needs no ignore and `.cargo/audit.toml` does. That is not an
 # inconsistency to tidy away by adding one here or dropping one there.
 #
 # What this comment used to say was that the advisory was "no longer
@@ -43,6 +59,11 @@ version = 2
 # or the mysql feature is excluded at the resolver level. Check with the
 # two `cargo tree` lines above plus a plain `grep sqlx-mysql Cargo.lock`;
 # the grep is the one that matters, because it is what cargo-audit reads.
+
+ignore = [
+	{ id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained and has no patched version; replacing it changes the audit sync wire format" },
+	{ id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml is unmaintained and has no patched version; serde_yaml_ng still depends on it and parses the compose file the deny-list walker reads" },
+]
 
 [licenses]
 version = 2

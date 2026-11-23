@@ -284,7 +284,8 @@ pub fn container_update(
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-fn project_dir(tenant_id: &str, project_id: &str) -> String {
+/// The directory a tenant project's compose file is written to and run from.
+pub(crate) fn project_dir(tenant_id: &str, project_id: &str) -> String {
 	format!("/var/lib/glyndor/helmly/projects/{tenant_id}/{project_id}")
 }
 

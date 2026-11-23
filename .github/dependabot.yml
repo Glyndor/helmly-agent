@@ -1,18 +1,102 @@
 version: 2
 
+# One entry per ecosystem this repository really has: the Rust crates, the
+# workflow actions and the hash-pinned Python requirements of the release
+# signer. There is no npm, bun, Docker or Go manifest here, so none is listed.
+#
+# Cadence: weekly, each ecosystem on its own weekday, so the pull requests of
+# one week do not land on the same CI queue. Security updates ignore both the
+# schedule and the cooldown, so a vulnerable dependency is still proposed the
+# day it is published. The cooldown keeps a release from becoming a pull
+# request until it has been out a few days, so a yanked or quickly superseded
+# version never costs a full CI run.
+#
+# Labels are the repository's own taxonomy (`type:`, `area:`, `prio:`,
+# `effort:`). Dependabot creates any label its config names, so a name outside
+# that list would come back after every cleanup.
+#
+# Every entry sets `target-branch: develop`, and GitHub applies that setting to
+# version updates only. A security update opens against `main`, where
+# `main-guard` refuses it; `dependabot-security-watch.yml` lists those and
+# fails by name, since nothing else reports the stuck state.
+
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "daily"
-    labels: ["type:deps", "type:ci"]
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    # `semver-major-days` is not accepted for this ecosystem and a refusal
+    # disables the whole file, so the wait is the same for every update type.
+    cooldown:
+      default-days: 3
+    labels: ["type:deps", "type:ci", "area:meta", "prio:P3", "effort:XS"]
     open-pull-requests-limit: 10
     target-branch: "develop"
+    # Patch and minor bumps are one question with one answer (does CI still
+    # pass) and arrive as one pull request. A major is the bump that can change
+    # what an action does, so it gets a pull request of its own.
+    groups:
+      actions-patch-and-minor:
+        patterns: ["*"]
+        update-types: ["patch", "minor"]
+      actions-major:
+        patterns: ["*"]
+        update-types: ["major"]
+    commit-message:
+      prefix: "chore"
+      include: "scope"
 
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
-      interval: "daily"
-    labels: ["type:deps"]
+      interval: "weekly"
+      day: "tuesday"
+      time: "06:00"
+      timezone: "UTC"
+    cooldown:
+      default-days: 3
+      semver-major-days: 14
+    labels: ["type:deps", "area:core", "prio:P3", "effort:XS"]
+    # The limit is what makes grouping more than tidiness: once it is full,
+    # Dependabot stops proposing anything, security bumps included.
     open-pull-requests-limit: 10
     target-branch: "develop"
+    groups:
+      cargo-patch-and-minor:
+        patterns: ["*"]
+        update-types: ["patch", "minor"]
+      # A major can change behaviour, so it never shares a pull request with
+      # the routine bumps and its title says what it is.
+      cargo-major:
+        patterns: ["*"]
+        update-types: ["major"]
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  # `sign-requirements.txt` pins `cryptography` and its dependencies by hash for
+  # the job that signs a release. Without an entry here the file is read only by
+  # GitHub's security scan, and a pin that nothing bumps keeps whatever advisory
+  # it was written with.
+  - package-ecosystem: "pip"
+    directory: "/.github/scripts"
+    schedule:
+      interval: "weekly"
+      day: "friday"
+      time: "06:00"
+      timezone: "UTC"
+    cooldown:
+      default-days: 3
+      semver-major-days: 14
+    labels: ["type:deps", "type:ci", "area:meta", "prio:P3", "effort:XS"]
+    open-pull-requests-limit: 5
+    target-branch: "develop"
+    groups:
+      signing-requirements:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore"
+      include: "scope"

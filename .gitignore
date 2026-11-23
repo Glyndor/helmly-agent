@@ -17,11 +17,5 @@ fuzz/artifacts/
 # Build artifacts
 /target
 
-# Agent / AI-tool artifacts — never commit (zero AI trace).
-.claude/
-.agents/
-.cursor/
-.aider*
-.continue/
-.playwright-mcp/
-**/*-mcp/
+# Python bytecode the test helpers leave behind
+__pycache__/

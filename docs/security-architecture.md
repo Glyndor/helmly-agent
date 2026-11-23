@@ -150,12 +150,15 @@ permission floors are at Write (`internal/handlers/containers.rs:17-19,
 role may list containers for the tenants it can already see)
 (`internal/handlers/containers.rs:9-13`).
 
-What happens on failure: the compose YAML walker rejects
-host-escape vectors before the file lands on disk
-(`internal/handlers/containers.rs:45-51`); the volume source is
-restricted to the tenant project dir, the webroot, `/tmp`, or a
-relative path (`internal/handlers/validate.rs:175-237`); identifiers
-are validated to alphanumeric, hyphen, and underscore only, length
+What happens on failure: `handle_container_deploy`
+(`internal/handlers/containers.rs`) passes the compose YAML to
+`validate_compose` (`internal/handlers/validate/compose/mod.rs`)
+before the file lands on disk, and a refusal ends the command with a
+generic `container.deploy compose rejected` while the reason is logged
+on the agent; bind sources are confined to the tenant project dir, the
+nginx webroot, or `/tmp` by `check_bind_source`
+(`internal/handlers/validate/compose/paths.rs`); identifiers are
+validated to alphanumeric, hyphen, and underscore only, length
 ≤128 (`internal/handlers/containers.rs:184-206`).
 
 ### 3.5 Agent to the public internet (hosted-site nginx, certbot/ACME, GitHub release downloads)
@@ -173,8 +176,9 @@ also reaches `github.com` and `objects.githubusercontent.com`
 
 What authenticates: the same signed-command path as 3.1. The nginx
 config is additionally passed through an allow-list walker
-(`internal/handlers/validate.rs:331-416`) and a hard-deny list
-(`internal/handlers/validate.rs:305-324`); the cert path is bounded
+(`validate_nginx` in `internal/handlers/validate.rs`) and a hard-deny
+list (`DENY_NGINX_DIRECTIVES` and `DENY_NGINX_PROXY_PATTERNS` in the
+same file); the cert path is bounded
 to a directory under `/etc/glyndor/helmly/nginx/certs/<domain>/`
 where `<domain>` is itself validated against a strict character set
 (`internal/handlers/nginx_cmd.rs:257-272`).
@@ -480,26 +484,61 @@ listed.
   sets `HOME=/var/lib/glyndor/helmly/orgs/<id>` and
   `XDG_RUNTIME_DIR=/run/user/<uid>` so rootless Podman finds its
   storage and socket (`internal/podman/mod.rs:71-73`).
-- **Compose YAML deny-list.** The walker rejects
-  `privileged`, `cap_add`, `cgroup_parent`, `devices`, `sysctls`,
-  `tmpfs`, `init: false` (presence or `init: false` is rejected;
-  `init: true` and absent are allowed)
-  (`internal/handlers/validate.rs:24-56, 102-114`).
-- **Conditional-deny values.** `network_mode: host` and
-  `network_mode: container:*`, `pid: host`, `ipc: host`,
-  `userns_mode` other than `auto` are rejected
-  (`internal/handlers/validate.rs:39-44, 116-138`).
-- **Security-opt deny.** `seccomp=unconfined`, `apparmor=unconfined`,
-  `systempaths=unconfined` are rejected
-  (`internal/handlers/validate.rs:46-50, 155-167`).
-- **`cap_drop: ["ALL"]` is rejected.** A rootless container that
-  drops all caps defeats the security model; the walker refuses it
-  (`internal/handlers/validate.rs:140-153`).
-- **Volume source allow-list.** A volume's `source` must be under
-  the tenant project dir, under the org webroot, equal to `/tmp`,
-  or relative (`internal/handlers/validate.rs:175-237`). Both the
-  long form `{source: …, target: …}` and the short form
-  `/host:/in:ro` are checked.
+- **Compose validation runs before the file is written.**
+  `validate_compose` (`internal/handlers/validate/compose/mod.rs`) takes
+  the YAML and a `ComposePolicy`: the project directory the file is
+  written to and run from (`podman::project_dir`), and the host ports the
+  agent itself uses (`reserved_host_ports` in
+  `internal/handlers/containers.rs`: the listener port, the WireGuard
+  port, the setup port and, where set, the dashboard port). It makes
+  three passes over the parsed document, one file per family under
+  `internal/handlers/validate/compose/`: `structure.rs`, then
+  `document.rs`, then the key rules of `keys.rs`. Every refusal names the
+  key and the reason, and a value in a shape a rule cannot read is
+  refused rather than skipped.
+- **YAML constructs that make a runner read something else are
+  refused anywhere** (`structure::check`). YAML tags, keys that are not
+  strings, merge keys (`<<`) and any unescaped `$` are rejected, so the
+  other rules see plain strings, lists and maps and the runner substitutes
+  nothing after validation; `$$` is accepted as a literal `$`.
+- **Top-level rules** (`document::check`). A top-level `name` and any
+  `x-podman*` extension are rejected. `services` must be a mapping of
+  mappings. A named volume whose `driver_opts` bind a host path (`o`
+  containing `bind` or `rbind`, or a `device` other than `tmpfs`) is
+  rejected, as is a network whose `name` or `driver` is `host`.
+- **Deny-listed keys at any depth** (`DENY_KEYS` in `keys.rs`):
+  `privileged`, `cap_add`, `cgroup_parent`, `devices`,
+  `device_cgroup_rules`, `sysctls`, `tmpfs`, `runtime`, `volumes_from`,
+  `extends`, `include`, `env_file`, `label_file`, `build`. An `x-` key is
+  accepted only at the top level, and a `file` or `environment` source
+  inside `secrets` or `configs` is rejected.
+- **Value rules** (`values.rs`). `init` must be `true` when present.
+  `network_mode`, `pid`, `ipc`, `uts` and `cgroup` may not name the host,
+  another container or service (`container:`, `service:`), or a
+  namespace by path (`ns:`), and `network_mode` may not carry
+  `slirp4netns:` or `pasta:` options. `userns_mode` may only be `auto`.
+  `cap_drop` may not contain `ALL`, in any case and with or without the
+  `CAP_` prefix, because a rootless container that drops every capability
+  is outside the security model. `security_opt` rejects any `seccomp`
+  or `unmask` entry, `apparmor` and `systempaths` set to `unconfined`,
+  and `label` set to `disable` or to a `type:`. The label
+  `io.containers.autoupdate` is rejected.
+- **Volume source allow-list** (`volumes.rs`, `paths.rs`). A service
+  volume is checked in its short form (`source:target[:options]`) and its
+  long form. A source that starts with `/`, `.` or `~` is a host path, and
+  so is a `bind` source and a `volume` source written as a path. A
+  host path is resolved against the project directory through every
+  symbolic link that exists, and must then lie under the project
+  directory, under the nginx webroot
+  (`/var/lib/glyndor/helmly/nginx/webroot`), or under `/tmp`; `..`, `~`
+  and an empty source are rejected. A long-form mount needs a `type`, and
+  only `bind` and `volume` are accepted.
+- **Host aliases and ports** (`hosts.rs`, `ports.rs`). `extra_hosts`
+  accepts only literal IP addresses, and rejects `host-gateway`, loopback,
+  unspecified and link-local addresses (including the address a
+  slirp4netns container uses for the host, `10.0.2.2`, and IPv4-mapped
+  forms). `ports` may not publish a host port, or a range that contains
+  one, that the agent itself uses, whatever the protocol or host address.
 - **Tenant project dir is chowned to the tenant user** so the
   tenant process can read its own compose file
   (`internal/podman/mod.rs:150-155`).
@@ -520,21 +559,22 @@ listed.
 
 - **Block-directive allow-list.** Only `events`, `http`, `server`,
   `location`, `upstream`, `map` may open a brace block
-  (`internal/handlers/validate.rs:247-253, 343-359`).
-- **Leaf-directive allow-list.** Inside those blocks, only the
-  documented set of ~40 reverse-proxy directives is allowed
-  (`internal/handlers/validate.rs:255-301, 368-391`).
+  (`ALLOWED_NGINX_DIRECTIVES`, checked by `validate_nginx` in
+  `internal/handlers/validate.rs`).
+- **Leaf-directive allow-list.** Inside those blocks, only the 40
+  reverse-proxy directives of `ALLOWED_NGINX_LEAF_DIRECTIVES` are
+  allowed, and `events` accepts only `worker_connections`
+  (`validate_nginx`).
 - **Hard-deny directives.** `dgram_access`, `perl_modules`,
-  `load_module`, `secure_link_secret`, `ssl_engine`, `aio`,
-  `thread_pool`, `js_import`, `js_content`, `client_body_temp_path`,
-  `fastcgi_param`, `uwsgi_param`, `scgi_param` are denied even if
-  nginx accepts them (`internal/handlers/validate.rs:305-320`).
+  `perl_require`, `load_module`, `secure_link_secret`, `ssl_engine`,
+  `aio`, `thread_pool`, `js_import`, `js_content`,
+  `client_body_temp_path`, `fastcgi_param`, `uwsgi_param`, `scgi_param`
+  (`DENY_NGINX_DIRECTIVES`) are denied even if nginx accepts them.
 - **proxy_pass unix-socket deny.** Any `proxy_pass` value that
   contains `unix:/var/run/docker.sock` or `unix:/var/run/podman/`
-  is rejected (`internal/handlers/validate.rs:324, 392-404`).
+  (`DENY_NGINX_PROXY_PATTERNS`) is rejected.
 - **Brace-balance check.** After the structural walk, an
-  unbalanced brace count is rejected
-  (`internal/handlers/validate.rs:410-414`).
+  unbalanced brace count is rejected (the end of `validate_nginx`).
 - **Allow-list + `nginx -t` defence-in-depth.** `nginx.update_config`
   writes the staged config to a temp file outside `/etc/nginx/`,
   runs `podman exec helmly-nginx nginx -t -c <tmp>`, and only swaps
@@ -558,8 +598,8 @@ listed.
 - **Certbot webroot.** `certbot certonly --webroot` runs against
   `/var/lib/glyndor/helmly/nginx/webroot`
   (`internal/handlers/nginx_cmd.rs:225-243`). The webroot itself
-  is also the allow-listed volume source
-  (`internal/handlers/validate.rs:230-232`).
+  is also an allowed volume source (`WEBROOT` in
+  `internal/handlers/validate/compose/paths.rs`).
 
 ### 4.11 Secret handling
 
@@ -752,12 +792,28 @@ Everything downstream — the binary signature, `SHA256SUMS`, the release pin
 check — rests on that constant being the real key.
 
 The file carrying it is fetched without authentication. `Glyndor/helmly`'s
-`install.sh:106-115` runs `curl` against
-`https://raw.githubusercontent.com/Glyndor/helmly-agent/main/setup-agent.sh`,
-then `chmod 700`, then `exec bash`, as root on a fresh host. There is no
-signature, no checksum, and no version: the URL names a **branch**, so what runs
-is whatever is on `main` at that moment. The `v2.0.0` release publishes six
-signed assets and `setup-agent.sh` is not among them.
+`install.sh:106-115` runs `curl` against a `raw.githubusercontent.com` URL, then
+`chmod 700`, then `exec bash`, as root on a fresh host. There is no signature,
+no checksum, and no version: the URL names a **branch**, so what runs is
+whatever is on that branch at that moment.
+
+The exact URL depends on which branch of `helmly` is read, so it is worth
+naming. `develop` is ahead by six commits of real work; `main` carries six
+promotion merge commits and no unique work of its own, which is the ordinary
+shape and not a fork:
+
+    helmly develop   raw.githubusercontent.com/Glyndor/helmly-agent/main/setup-agent.sh
+    helmly main      raw.githubusercontent.com/Glyndor/panel-agent/main/setup-agent.sh
+
+`main` is the branch actually served to operators, and it still names this
+repository under its pre-rename name. Measured, both return HTTP 200 with
+byte-identical content (sha256 `6e7b3048...36256c`), because GitHub serves a
+renamed repository under its old name. The stale name is cosmetic; the missing
+signature is not, and it is the same on both branches.
+
+`v2.0.0` published six signed assets and `setup-agent.sh` was not among them.
+`v2.0.1` publishes it and `update-agent.sh` signed, which is the producing half
+of the fix and changes nothing on its own: the consumer still does not verify.
 
 **What an attacker gains.** Whoever controls that fetch controls `PUB_KEYS_B64`,
 and therefore decides which binary verifies. Every signature check in 4.8 then
@@ -767,12 +823,40 @@ compound — or TLS interception between the operator and
 `raw.githubusercontent.com`, which is the scenario signing exists to answer and
 is not otherwise addressed anywhere in the install path.
 
+One qualification on reachability, because it cuts the other way and belongs
+here rather than in a footnote. `install.sh`'s own documented invocation,
+`curl -fsSL .../install.sh | sudo bash`, currently fails on `main` before it
+reaches any of this: `install.sh:30` reads `${BASH_SOURCE[0]}` under
+`set -euo pipefail`, and piped into `bash` that array element is unset, so the
+script exits 1 on "unbound variable". The path described above is live only for
+an operator running the script from a checkout. That is a defect in `helmly`,
+not a control, and it will stop protecting anything the moment it is fixed.
+
 It is not remotely exploitable by an internet attacker as things stand. The
 finding is that the product ships a signature chain whose root is
-unauthenticated, so the chain proves less than its documentation implies. Nor
-can the agent close this itself: `install.sh` lives in `Glyndor/helmly`, so the
-fix is cross-repo. Tracked in #181, with the destination being the installer
-shipped inside the signed `.deb` rather than curled.
+unauthenticated, so the chain proves less than its documentation implies. The
+agent cannot close it alone: `install.sh` lives in `Glyndor/helmly`, so the fix
+is cross-repo. Tracked in #181.
+
+**State of the fix, which is written out rather than summarised as done because
+an operator is still exposed.** Both halves exist and neither has reached one:
+
+- Producing half, live. `v2.0.1` publishes `setup-agent.sh` and
+  `update-agent.sh` as signed release assets alongside the binaries, all
+  derived from one `RELEASE_ARTIFACTS` list in `release.yml` so a new asset
+  cannot ship unsigned with the gates still green.
+- Consuming half, written but not served. `Glyndor/helmly#151` makes
+  `install.sh` fetch both scripts from a release and verify them against a key
+  pinned there, failing closed when it cannot verify. It is on that
+  repository's `develop`, and `main` is the branch operators are served, so
+  the old unverified fetch is still what runs.
+
+What the pair buys, stated exactly, because "now it is signed" claims more:
+write access to this repository alone stops being enough to replace the
+installer, since the release signing key is a separate secret. It is not a
+defence against tampering with `helmly`'s `install.sh`, which pins the key and
+is itself distributed by cloning that repository. Closing that hop is what the
+`.deb` route would do, and it is not what shipped here.
 
 ## 6. Out of scope
 
@@ -821,16 +905,18 @@ of the following:
   `update-agent.sh`.
 - Isolation: `internal/nftables/mod.rs`,
   `internal/nftables/divergence.rs`, `internal/podman/mod.rs`,
-  `internal/handlers/validate.rs`, `internal/handlers/containers.rs`.
+  `internal/handlers/validate.rs`, `internal/handlers/validate/compose/`,
+  `internal/handlers/containers.rs`.
 
 Not after, not in a follow-up, not "later when there's time". A
 review agent that diffs the code against this document and finds a
 gap on a feature merged yesterday is the failure mode this rule
 exists to prevent.
 
-A refactor counts, even one that changes no behaviour. Every claim
-here carries a line number, and moving code invalidates them
-silently: a citation that now points at the wrong function still
+A refactor counts, even one that changes no behaviour. Most claims
+here carry a line number (the two validators are cited by file and by
+function or constant name, which a move does not silence), and moving
+code invalidates the line numbers silently: a citation that now points at the wrong function still
 reads as evidence. #152 moved `build_tls_acceptor` and `serve_tls`
 out of `internal/main.rs` and shifted everything after them, which
 left thirteen citations in this file pointing at unrelated code and

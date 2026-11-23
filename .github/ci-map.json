@@ -1,0 +1,47 @@
+{
+  "suites": {
+    "rust": [
+      "internal/**",
+      "Cargo.toml",
+      "Cargo.lock",
+      "rust-toolchain.toml",
+      "rustfmt.toml",
+      ".sqlx/**",
+      "migrations/**",
+      ".github/workflows/reusable-rust-ci.yml",
+      "deny.toml",
+      ".cargo/audit.toml"
+    ],
+    "shell": [
+      "setup-agent.sh",
+      "update-agent.sh",
+      "internal/update/mod.rs",
+      "tests/**",
+      ".github/scripts/**",
+      ".github/workflows/**",
+      ".github/actions/**",
+      ".github/required-checks.json",
+      ".github/structure.json"
+    ],
+    "workflows": [
+      ".github/workflows/**",
+      ".github/actions/**",
+      ".github/required-checks.json"
+    ]
+  },
+  "everything": [
+    ".github/workflows/ci.yml",
+    ".github/ci-map.json",
+    ".github/scripts/ci/**"
+  ],
+  "no-suite": [
+    "**/*.md",
+    "LICENSE",
+    ".editorconfig",
+    ".gitignore",
+    ".env.example",
+    ".github/CODEOWNERS",
+    ".github/ISSUE_TEMPLATE/**",
+    ".github/dependabot.yml"
+  ]
+}

@@ -1,0 +1,79 @@
+name: Dependabot security watch
+
+# Dependabot security updates ignore `target-branch` and open against `main`,
+# where `main-guard` refuses any pull request whose source is not `develop`.
+# The bump then sits open with one red check and nothing reports it. The
+# decision is to keep `target-branch: develop` and `main-guard` as they are,
+# re-land each security bump by hand off `develop`, and make the stuck state
+# loud. This workflow is the loud part: it lists the open pull requests into
+# `main` and fails when Dependabot authored one whose head is not `develop`.
+# The selection and the report live in
+# `.github/scripts/dependabot_security_watch.py`, whose tests are
+# `tests/dependabot-security-watch.test.sh`.
+#
+# Four triggers, each for a different reason:
+#
+# - `schedule`, daily: a stuck bump ages a day at a time, and the report has
+#   to keep appearing whether or not anyone pushes. GitHub reads `schedule:`
+#   from the default branch only, so the cron is inert until this file is on
+#   `main`.
+# - `push` to `develop`: the watcher proves itself alive every time work
+#   lands. A cron that stops firing emits nothing and "no alert" reads as "all
+#   clear"; a run on every merge into `develop` is the second fact that tells
+#   the two apart.
+# - `pull_request`, for this file and its script only: a workflow that never
+#   runs on the pull request that changes it merges without having been
+#   executed. The `gh pr list` call is read-only.
+# - `workflow_dispatch`: rerun by hand after re-landing a bump, to confirm the
+#   report went quiet.
+#
+# The check it emits, `dependabot security watch`, is advisory on purpose and
+# required nowhere: a required check that fails because a third party opened a
+# pull request would block every unrelated merge on somebody else's timing.
+
+on:
+  schedule:
+    # Daily, off the hour so the run does not queue behind the crowd.
+    - cron: "37 5 * * *"
+  workflow_dispatch:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [develop]
+    paths:
+      - ".github/workflows/dependabot-security-watch.yml"
+      - ".github/scripts/dependabot_security_watch.py"
+      - "tests/dependabot-security-watch.test.sh"
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: dependabot-security-watch-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  dependabot-security-watch:
+    name: dependabot security watch
+    runs-on: ubuntu-latest
+    # One checkout and one `gh pr list` call; the closest sibling, the
+    # Dependabot freshness job, takes 4 to 6 seconds (30 runs measured).
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Report Dependabot pull requests stuck against main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        # `pipefail` makes a failed `gh` call fail the step; without it the
+        # script would read an empty stream and exit 2 for a reason the log
+        # does not name.
+        run: |
+          set -euo pipefail
+          gh pr list --repo "$REPO" --base main --state open --limit 100 \
+            --json number,title,author,headRefName,createdAt \
+            | python3 -I .github/scripts/dependabot_security_watch.py

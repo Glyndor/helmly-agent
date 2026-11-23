@@ -1,0 +1,111 @@
+# cargo-audit configuration for helmly-agent.
+#
+# cargo-audit (run via .github/workflows/audit.yml) fails on any RUSTSEC
+# advisory: vulnerabilities by default, and warnings and yanked crates
+# (`--deny warnings`). A fix goes in the lockfile or the dependency; an entry
+# here is for an advisory that cannot be fixed that way, and each one below
+# carries the command that shows why and the condition that retires it.
+#
+# cargo-audit reads this file from `.cargo/audit.toml` under the directory it
+# runs in, or from `~/.cargo/audit.toml`. It does not read an `audit.toml` at
+# the project root, which is where this file used to sit. Measured with
+# cargo-audit 0.22.2 on 2026-11-22, the version audit.yml and release.yml
+# install: with the file at the root the ignore list was not applied, with the
+# same file under `.cargo/` it was, and the workflows no longer repeat any
+# ignore on the command line.
+#
+# Re-check on: every sqlx release + every 6 months.
+
+[advisories]
+
+# RUSTSEC-2023-0071 — `rsa` 0.9.10 Marvin-Attack timing sidechannel.
+# Severity 5.9 (medium). No fixed upgrade is available upstream.
+# Reachability in helmly-agent: NOT IN THE BINARY.
+#
+# How I measured (2026-08-17):
+#   $ cargo metadata --format-version 1 |
+#     jq '.packages[] | select(.name=="helmly-agent") |
+#         .dependencies[] | select(.name=="rsa")'
+#   # → empty: helmly-agent has no direct edge to rsa.
+#
+#   $ cargo metadata --format-version 1 |
+#     jq '. as $a | $a.packages[] |
+#         select(.dependencies[] | .name=="rsa") | .name'
+#   # → sqlx-mysql (only reverse-dependency of rsa in Cargo.lock).
+#
+#   $ cargo tree -i rsa
+#   # → only sqlx-mysql appears; helmly-agent absent.
+#
+# Why the dep is unreachable: `sqlx-mysql` is enabled as a
+# build-time driver for `sqlx-macros-core` (driven by sqlx's `macros`
+# feature for compile-time query verification). Proc-macros compile
+# in their own compilation unit and are NOT linked into the final
+# binary. Confirmed by the absent direct edge from helmly-agent to rsa.
+#
+# When this would change: enabling a sqlx feature that pulls the
+# `mysql` driver into the runtime path (none currently do — the
+# only paths to sqlx-mysql are through sqlx-macros-core's driver
+# verification), OR switching to a non-default sqlx backend.
+#
+# Re-check cadence: every sqlx release + every 6 months. Drop this
+# entry when the source dep (sqlx-mysql) is gone from Cargo.lock.
+ignore = [
+    "RUSTSEC-2023-0071",  # rsa 0.9.10 — Marvin-Attack; unreachable (proc-macro driver only)
+    "RUSTSEC-2026-0459",  # libsqlite3-sys 0.30.1 — unreachable (sqlite driver not enabled)
+    "RUSTSEC-2026-0543",  # chrono — unmaintained, no patched version
+    "RUSTSEC-2024-0449",  # unsafe-libyaml — unmaintained, no patched version
+]
+
+# RUSTSEC-2026-0459 -- `libsqlite3-sys` 0.30.1, "via C SQLite CVE-2026-119375".
+# Fixed in >= 0.39.0. Reachability in helmly-agent: NOT IN ANY BUILD GRAPH.
+#
+# How I measured (2026-11-22, sqlx 0.8.6):
+#   $ cargo tree --target all --all-features -i libsqlite3-sys
+#   # -> warning: nothing to print.
+#   $ cargo tree --target all --all-features -e features -i sqlx-sqlite
+#   # -> warning: nothing to print.
+#   $ cargo tree --target all --all-features -e features -i sqlx | grep 'sqlx feature'
+#   # -> postgres, but neither sqlite nor mysql.
+#
+# Why it is in Cargo.lock anyway: sqlx-macros-core lists the sqlite driver as
+# an optional dependency, and cargo-audit reads the lockfile as text, so it
+# reports a crate that cargo never compiles for this project. The crate that
+# carries the fix, 0.39 or newer, is not available to sqlx 0.8, which pins
+# `^0.30.1`; sqlx 0.9 accepts it.
+#
+# When this would change: enabling sqlx's `sqlite` feature, which would put
+# the C library into the binary. The entry is removed when sqlx moves to 0.9.
+
+# RUSTSEC-2026-0543 -- chrono 0.4.45 is unmaintained ("all versions are
+# affected", `patched = []`). Informational: it names no vulnerability.
+#
+# It is reachable, not a lockfile ghost:
+#   $ cargo tree -i chrono --target all --all-features
+#   # -> helmly-agent (direct) and sqlx-core / sqlx-postgres (feature "chrono")
+#
+# It is not removed here because the replacement the advisory suggests (time or
+# jiff) is a behaviour change, not a version bump: the audit entries leave the
+# agent as JSON built from chrono's RFC 3339 output and from a
+# `DateTime<Utc>` column type (internal/sync/mod.rs posts it to the dashboard).
+# Swapping the type changes the serialised form unless it is pinned by tests
+# first.
+#
+# Retire it when chrono is replaced, or when an advisory update lists a
+# patched version.
+
+# RUSTSEC-2024-0449 -- unsafe-libyaml 0.2.11 is unmaintained (repository
+# archived 2024-03-25). Informational: no vulnerability is attached.
+#
+# It is reachable through a single path:
+#   $ cargo tree -i unsafe-libyaml --target all --all-features
+#   # -> serde_yaml_ng 0.10.0 -> helmly-agent
+#
+# serde_yaml_ng 0.10.0 is the newest release and still depends on it. The only
+# user in this repository is internal/handlers/validate.rs, which parses the
+# compose file of a signed command and walks it against the deny list. That
+# walker decides what a root daemon refuses to run, so changing the parser
+# changes what it sees; it needs its own change with differential tests, not an
+# audit-driven swap.
+#
+# Retire it when serde_yaml_ng stops depending on unsafe-libyaml, or when the
+# parser is replaced.

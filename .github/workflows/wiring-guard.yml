@@ -1,0 +1,69 @@
+name: wiring-guard
+
+# The wiring tests run from the tree of the pull request, so a change to a workflow
+# and to the test that guards it validates itself. This workflow is read from the base
+# branch by GitHub (`pull_request_target`), so the pull request cannot change it, and it
+# runs the validator that the base holds on the `.github` of the change, which it
+# brings in as files.
+#
+# Nothing of the change is run, imported or sourced. It has no secret and a read-only
+# token. The change is not checked out: its `.github` is written, entry by entry, into a
+# directory of its own by a script of the base, and the validator is told where it is.
+# Changing an invariant is a pull request of its own that has to be merged first, because
+# the validator of the base is the one that judges the next change.
+#
+# There is no merge queue in this repository, so there is no `merge_group` here: in a
+# queue GitHub reads the workflow from the commit of the group, which already holds the
+# change, and that run would not be an independent verdict.
+
+on:
+  pull_request_target:
+    branches: [develop, main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+# A security result is never cancelled by a newer run.
+concurrency:
+  group: wiring-guard-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  wiring-guard:
+    # One name for each base, so that each ruleset can require its own and the result
+    # for one base cannot satisfy the other.
+    name: ${{ github.event.pull_request.base.ref == 'develop' && 'wiring-guard' || (github.event.pull_request.base.ref == 'main' && 'wiring-guard (main)' || 'wiring-guard (other base)') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      # The tip of the target branch, which is what `pull_request_target` checks out by
+      # default. Never a commit of the change.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Bring the .github of the change in as files
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          [ "$EVENT" = pull_request_target ] || { echo "::error::an event this guard does not judge: $EVENT"; exit 1; }
+          [[ "$PR_NUMBER" =~ ^[0-9]+$ ]] || { echo "::error::the number of the pull request is not a number"; exit 1; }
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::the head of the pull request is not a commit"; exit 1; }
+          git fetch --no-tags --depth=1 origin "refs/pull/${PR_NUMBER}/merge:refs/wiring-guard/change"
+          # GitHub makes the merge ref in the background, so it can be behind the head.
+          # Its second parent is the head it merged, and it has to be the head of this event.
+          merged_head="$(git cat-file -p refs/wiring-guard/change | awk '/^$/ {exit} /^parent / {print $2}' | sed -n 2p)"
+          [ "$merged_head" = "$HEAD_SHA" ] || { echo "::error::the merge ref holds ${merged_head:-no head}, not the head of the pull request ($HEAD_SHA); run it again once GitHub has made it"; exit 1; }
+          mkdir "$RUNNER_TEMP/change"
+          python3 -I tests/lib/ci_wiring_extract.py refs/wiring-guard/change "$RUNNER_TEMP/change"
+
+      - name: Validate it with the validator of the base
+        env:
+          CI_WIRING_TREE: ${{ runner.temp }}/change
+        run: python3 -I tests/lib/ci_wiring.py

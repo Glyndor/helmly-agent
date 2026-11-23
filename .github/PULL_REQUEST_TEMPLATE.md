@@ -15,7 +15,7 @@
 - [ ] `cargo test --locked --all-features --workspace` passes
 - [ ] `cargo llvm-cov --locked --workspace --all-features --summary-only --json --output-path coverage.json` meets the ratchet in `ci.yml` (`coverage-threshold`)
 - [ ] `shellcheck -S style setup-agent.sh update-agent.sh tests/*.sh` is clean, run with **v0.11.0**, the version CI pins (a different version is a different answer; see CONTRIBUTING.md)
-- [ ] `cargo audit --deny warnings --ignore RUSTSEC-2023-0071` and `cargo deny check` pass, for changes to `Cargo.toml`, `Cargo.lock`, `audit.toml` or `deny.toml`
+- [ ] `cargo audit --deny warnings` and `cargo deny check` pass, for changes to `Cargo.toml`, `Cargo.lock`, `.cargo/audit.toml` or `deny.toml`
 
 <!--
 A test that was not watched fail is not a test. If this PR adds or changes a

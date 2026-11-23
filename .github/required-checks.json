@@ -1,0 +1,10 @@
+{
+  "develop": [
+    "ci-gate",
+    "dco / Signed-off-by present on every commit"
+  ],
+  "main": [
+    "ci-gate (main)",
+    "develop-only"
+  ]
+}
