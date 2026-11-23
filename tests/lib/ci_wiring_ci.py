@@ -37,6 +37,8 @@ def check_reusables_honour_run(findings: list) -> None:
 		if "run" not in inputs:
 			continue
 		for job_id, job in (doc.get("jobs") or {}).items():
+			if job_id == "outcome" and path.name == "reusable-rust-ci.yml":
+				continue  # the sentinel runs always and judges the others (check_rust_contract)
 			if "inputs.run != 'false'" not in str(job.get("if", "")):
 				findings.append(f"{path.name}: job {job_id!r} takes the run input but its `if` does not test it")
 
@@ -234,7 +236,7 @@ def actions_permission(perms: object) -> str:
 
 def check_write_token(findings: list) -> None:
 	"""No job writes to Actions: nothing in this repository cancels or starts runs."""
-	for path in sorted(WORKFLOWS.glob("*.yml")):
+	for path in workflow_files():
 		doc = load_yaml(path)
 		if "permissions" not in doc:
 			findings.append(f"{path.name}: declares no top-level permissions, so its token is whatever the repository default is")
@@ -269,7 +271,7 @@ def check_suite_jobs_start(findings: list) -> None:
 
 
 def check_event_values_via_env(findings: list) -> None:
-	for path in sorted(WORKFLOWS.glob("*.yml")):
+	for path in workflow_files():
 		for job_id, job in (load_yaml(path).get("jobs") or {}).items():
 			for step in job.get("steps") or []:
 				if re.search(r"\$\{\{\s*(?:github\.event\.|github\.head_ref)", str(step.get("run", ""))):

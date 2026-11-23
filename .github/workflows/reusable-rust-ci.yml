@@ -152,6 +152,47 @@ jobs:
           sys.exit(0 if pct >= threshold else 1)
           PY
 
+  # The caller of this workflow sees one result: success when every job inside
+  # succeeded or was skipped. A skipped job counts as passed, so a condition made
+  # false by mistake (`&& false` on the coverage job) would leave the caller green
+  # with no test run at all. This job always runs and fails unless the job that the
+  # inputs select ran and succeeded: with a threshold, lint and coverage and not
+  # test; without one, lint and test and not coverage; with `run` false, nothing.
+  outcome:
+    name: Outcome
+    needs: [lint, test, coverage]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      RUN: ${{ inputs.run }}
+      THRESHOLD: ${{ inputs.coverage-threshold }}
+      LINT: ${{ needs.lint.result }}
+      TEST: ${{ needs.test.result }}
+      COVERAGE: ${{ needs.coverage.result }}
+    steps:
+      - name: The selected jobs succeeded and the others were skipped
+        run: |
+          set -uo pipefail
+          bad=0
+          want() { # want <name> <result> <expected>
+            if [ "$2" != "$3" ]; then echo "::error::$1 ended '$2' and should have ended '$3'"; bad=1; fi
+          }
+          if [ "$RUN" = false ]; then
+            want lint "$LINT" skipped
+            want test "$TEST" skipped
+            want coverage "$COVERAGE" skipped
+          elif [ "$THRESHOLD" -gt 0 ] 2> /dev/null; then
+            want lint "$LINT" success
+            want test "$TEST" skipped
+            want coverage "$COVERAGE" success
+          else
+            want lint "$LINT" success
+            want test "$TEST" success
+            want coverage "$COVERAGE" skipped
+          fi
+          exit "$bad"
+
   # Two required checks of the `develop` ruleset, `rust / MSRV` and
   # `rust / Extra platforms`, answer questions this repository does not ask: it
   # declares no minimum Rust version and tests on Linux only. Both used to be
