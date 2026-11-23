@@ -27,6 +27,22 @@ name: CI
 # `true` for every suite, and if it fails outright its outputs are empty, an
 # empty output is not `false`, every suite runs, and `ci-gate` is red.
 #
+# Order, cheapest first, so a failure stops the dearer work:
+#   decide, dco                         seconds
+#   workflow-lint, shell                about 20 seconds
+#   rust (fmt and clippy, then tests, then coverage)
+# The dependency audit is not behind those gates: it is a security analysis and
+# runs whatever the functional checks do.
+# A job behind a failed gate is skipped, and the pull request is red because of
+# the gate that failed and because `ci-gate` sees a suite skipped without the
+# plan's leave.
+#
+# Nothing is cancelled across workflows. The other workflows of a commit are
+# CodeQL and, inside this one, the dependency audit and the DCO check: security
+# analyses, which a functional failure must never leave a commit without. What is
+# dear and functional (the Rust builds) is behind the cheap gates by `needs`, so
+# a failure stops it before it starts rather than after it has been paid for.
+# Security work is not behind any gate and never cancelled.
 
 on:
   push:
@@ -137,9 +153,16 @@ jobs:
       test-command: ./tests/run.sh
       apt-packages: python3-cryptography
 
+  # The dear Rust suite waits for the cheap checks, on a pull request: if one of
+  # the three gates failed this job is skipped, and `ci-gate` is red because that
+  # suite was skipped while the plan said it should run (and the failed gate is
+  # red itself). The condition names the real gates only. The plan job is not
+  # among them: if it fails nothing may end up skipped-and-green, and `ci-gate`
+  # judges that on its own. A gate that was skipped by the plan is not a failure,
+  # so a suite the map did not need does not hold this one back.
   rust:
-    needs: [decide]
-    if: ${{ !cancelled() }}
+    needs: [decide, dco, workflow-lint, shell]
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (needs.dco.result != 'failure' && needs.workflow-lint.result != 'failure' && needs.shell.result != 'failure')) }}
     uses: ./.github/workflows/reusable-rust-ci.yml
     with:
       run: ${{ needs.decide.outputs.rust }}

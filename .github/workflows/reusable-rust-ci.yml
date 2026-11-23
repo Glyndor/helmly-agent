@@ -6,7 +6,10 @@ name: Rust CI (reusable)
 # is what lets a required check report instead of leaving a pull request waiting
 # for a check that never started.
 #
-# Measured over 21 runs: lint 80 s, test 116 s, coverage 122 s.
+# Order is cheapest first: `Format & lint` (rustfmt, then clippy), then `Test`,
+# then `Coverage`. Each one needs the one before, so a lint failure never pays
+# for a test build and a test failure never pays for an instrumented rebuild.
+# (Measured over 21 runs: lint 80 s, test 116 s, coverage 122 s.)
 #
 # The toolchain is whatever `rust-toolchain.toml` names. Nothing here chooses
 # one, so there is no second place for it to drift.
@@ -71,6 +74,7 @@ jobs:
 
   test:
     name: Test
+    needs: lint
     if: ${{ inputs.run != 'false' }}
     runs-on: ubuntu-latest
     # Measured 116 s mean, 163 s worst over 21 runs.
@@ -98,6 +102,7 @@ jobs:
 
   coverage:
     name: Coverage
+    needs: test
     if: ${{ inputs.run != 'false' && inputs.coverage-threshold > 0 }}
     runs-on: ubuntu-latest
     # Measured 122 s mean, 186 s worst over 21 runs.
