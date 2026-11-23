@@ -85,9 +85,9 @@ intent, not to drive state.
 The local surface is `cargo` plus `tests/`. `tests/run.sh` is the shell
 suite: it iterates `tests/*.test.sh`, and it fails when it finds none,
 so a runner that matches nothing cannot report success. CI calls it
-through `reusable-shell-ci.yml`'s `test-command`, naming the runner and
+through the `test-command` of `reusable-shell-ci.yml`, naming the runner and
 not one file, so a new `tests/*.test.sh` is picked up by existing rather
-than by remembering to edit a workflow input. `README.md:29-30` covers
+than by remembering to edit a workflow input. The README covers
 only `cargo build --release` and `cargo test`. Everything beyond that is
 what CI runs. Run all of it before pushing:
 
@@ -101,7 +101,12 @@ cargo llvm-cov --locked --workspace --all-features \
 shellcheck -S style setup-agent.sh update-agent.sh tests/*.sh
 cargo audit --deny warnings
 cargo deny check
+python3 .github/scripts/ci/structure.py --exceptions .github/structure.json
 ```
+The Rust toolchain is the one `rust-toolchain.toml` names. `cargo audit` and
+`cargo deny` are the release binaries pinned in
+`.github/actions/cargo-audit/action.yml`, with the ignores in
+`.cargo/audit.toml` and `deny.toml`.
 Use **shellcheck v0.11.0**, the version CI pins. This is not pedantry: the
 same file is clean under one version and not another. `#170` passed
 shellcheck 0.10.0 locally and failed CI, because 0.10.0 reports SC2317
@@ -146,38 +151,58 @@ silently.
 The two installer scripts (`setup-agent.sh`, `update-agent.sh`) are the
 only shell in the repository and are linted at shellcheck's strictest
 level (`-S style`). Both run as root on a fresh server, which is the
-worst place to find out a script is broken. `setup-agent.sh` is around
-1,250 lines.
+worst place to find out a script is broken. `setup-agent.sh` has 944 code
+lines, the one file over the 500-line limit; `.github/structure.json` lists it
+with a ceiling that can only go down (#153).
 
 ## Workflows
 
 CI is split by responsibility rather than gathered in one file:
 
-| file | what fails there |
+| file | what runs there |
 |---|---|
-| `ci.yml` | rustfmt, clippy, tests, coverage, shellcheck, workflow-lint, Dependabot freshness, audit freshness |
+| `ci.yml` | on a pull request into `develop` or `main`, and on a push to `develop`: the plan (`decide`), DCO, workflow lint, the shell suite, the Rust suite (rustfmt and clippy, then the tests once, run under coverage), the dependency audit, the structure check, and `ci-gate`, the check a pull request must pass (see below) |
 | `codeql.yml` | CodeQL analysis of the workflows and the Rust code, on pull requests and pushes to `develop` and `main`, and weekly |
-| `audit.yml` | `cargo audit` (RUSTSEC) and `cargo deny`, weekly and on push |
-| `dco.yml` | every commit on the pull request carries a `Signed-off-by:` trailer |
+| `audit.yml` | the weekly `cargo audit` of the lockfile of `main` and of `develop`, taken out of git as data, for advisories published while nothing is pushed (`cargo deny` runs in the `audit` job of `ci.yml`) |
+| `freshness.yml` | weekly: fails when Dependabot has gone quiet |
+| `dependabot-security-watch.yml` | lists Dependabot security pull requests stuck against `main` |
 | `main-guard.yml` | a pull request into `main` whose head is not `develop` |
 | `release.yml` | tag-driven release, signing, attestation, pinned-key parity |
 
-Every reusable this repository calls lives in
-`.github/workflows/reusable-*.yml` as a copy taken from a named
-`Glyndor/.github` tag. Nothing is pulled remotely.
+Every reusable this repository calls lives in `.github/workflows/reusable-*.yml`.
+They are this repository's own files; nothing is pulled from another one.
 
-**Job ids are load-bearing.** A required status check is named
-`<caller job id> / <inner job name>`, so renaming a job renames its
-check and creates a phantom the ruleset still requires, which blocks
-every pull request with no explanation. Move jobs between files freely,
-renaming one is a ruleset change.
+**A suite runs only when its paths changed.** `.github/ci-map.json` names the
+suites (`rust`, `shell`, `workflows`), the paths that rerun
+all of them and the paths no suite looks at. The `decide` job reads the changed
+paths against it, using the script and the map of the base commit. A file the map
+does not know runs everything, and `tests/ci-map.test.sh` fails for a tracked file
+that no suite claims. Add the path of a new file to the map in the same change.
 
-**The shell CI `test` job is intentionally not enabled.** No shell test
-suite exists in this repository, so the reusable's `test` job is passed
-no `test-command` and skips on every run. A skipped required check
-reports Success, so the `shell / shellcheck` job is the only one of the
-two worth promoting to required, and only after it has been seen to
-fail.
+**What a pull request must pass.** GitHub counts a skipped required check as
+passed, so no suite is required by its own name. `ci-gate` always runs and fails
+unless the plan succeeded and each suite succeeded or was skipped because the
+plan said it had nothing to check; the audit and the structure check have no plan
+and must succeed. The gate is named by the base branch: `ci-gate` for a pull request
+into `develop`, `ci-gate (main)` for one into `main` (which runs every suite with no
+plan), and `ci-gate (push)` for a push, so the result of one event cannot satisfy the
+requirement of another. The rulesets require `ci-gate` and the DCO check on
+`develop`, and `ci-gate (main)` and `develop-only` on `main`, together with the
+CodeQL rule.
+`.github/required-checks.json` is a copy of those names, and
+`tests/ci-wiring.test.sh` fails when a workflow stops emitting one.
+
+**The cheap checks come first.** The workflow lint, the shell suite and the DCO
+check gate the Rust suite on a pull request; inside it the tests are built and
+run once, after lint, under coverage. The dependency audit has no plan and is not
+behind any gate, and nothing is cancelled across workflows: CodeQL, the audit and
+DCO are never left unrun by a functional failure.
+
+**Job ids are load-bearing.** A required status check is named by its job, and
+for a reusable by `<caller job id> / <inner job name>`, so renaming a job renames
+its check and creates a phantom the ruleset still requires, which blocks every
+pull request with no explanation. Move jobs between files freely; renaming one is
+a ruleset change.
 
 ## Security
 
