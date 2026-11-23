@@ -398,4 +398,84 @@ sabotage audit.yml '      - uses: ./.github/actions/cargo-audit' '      - run: c
       - uses: ./.github/actions/cargo-audit'
 caught "cargo-deny in the scheduled audit is caught" "must not run cargo-deny"
 
+# --- the token that could cancel or start runs -------------------------------------
+fresh_copy
+sed -i '0,/^permissions:$/s//permissions:\n  actions: write/' "$WORK/tree/.github/workflows/codeql.yml"
+check "actions: write at workflow level is caught" "codeql.yml: the token can write to Actions at workflow level" "$(finding)"
+
+fresh_copy
+sed -i '0,/^permissions:$/s//permissions: write-all\nxpermissions:/' "$WORK/tree/.github/workflows/ci.yml"
+check "write-all at workflow level counts as actions: write" "ci.yml: the token can write to Actions at workflow level" "$(finding)"
+
+fresh_copy
+python3 - "$WORK/tree/.github/workflows/ci.yml" << 'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+s = s.replace("  decide:\n    name: decide\n    runs-on: ubuntu-latest\n", "  decide:\n    name: decide\n    permissions: write-all\n    runs-on: ubuntu-latest\n", 1)
+open(p, "w").write(s)
+PY
+check "a job with write-all is caught" "ci.yml: job 'decide' can write to Actions" "$(finding)"
+
+fresh_copy
+python3 - "$WORK/tree/.github/workflows/ci.yml" << 'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+s = s.replace("  decide:\n    name: decide\n    runs-on: ubuntu-latest\n", "  decide:\n    name: decide\n    permissions:\n      actions: write\n    runs-on: ubuntu-latest\n", 1)
+open(p, "w").write(s)
+PY
+check "a job with actions: write is caught" "ci.yml: job 'decide' can write to Actions" "$(finding)"
+
+fresh_copy
+python3 - "$WORK/tree/.github/workflows/freshness.yml" << 'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+s = s.replace("permissions: {}\n", "", 1)
+open(p, "w").write(s)
+PY
+check "a workflow with no permissions block is caught" "freshness.yml: declares no top-level permissions, so its token is whatever the repository default is" "$(finding)"
+
+fresh_copy
+python3 - "$WORK/tree/.github/workflows/ci.yml" << 'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+s = s.replace("          all() {", '          echo "${{ github.event.pull_request.title }}"\n          all() {', 1)
+open(p, "w").write(s)
+PY
+check "a github.event value inside run: is caught" "ci.yml: job 'decide' puts a github.event value inside run:, not env:" "$(finding)"
+
+# --- every suite job starts even if the plan failed, and skips only on an explicit false -
+fresh_copy
+sabotage ci.yml '  shell:
+    needs: [decide]
+    if: ${{ !cancelled() }}' '  shell:
+    needs: [decide]'
+caught "a suite job without !cancelled() is caught" "ci.yml: job 'shell' has no \`!cancelled()\` in its \`if\`, so a failed plan would leave it skipped and green" 
+
+fresh_copy
+sabotage ci.yml '  shell:
+    needs: [decide]
+    if: ${{ !cancelled() }}' "  shell:
+    needs: [decide]
+    if: \${{ !cancelled() && needs.decide.outputs.shell == 'true' }}"
+caught "a suite that runs only on an explicit true is caught" "ci.yml: job 'shell' runs only on an explicit true; a missing plan must run it"
+
+# --- the tests are built and run once ------------------------------------------------
+fresh_copy
+sed -i "s/    if: \${{ inputs.run != 'false' \&\& inputs.coverage-threshold == 0 }}/    if: \${{ inputs.run != 'false' }}/" "$WORK/tree/.github/workflows/reusable-rust-ci.yml"
+caught "a Test job that runs beside Coverage is caught" "the Test job must run only when there is no coverage threshold, or the suite is built and run twice"
+
+fresh_copy
+python3 - "$WORK/tree/.github/workflows/reusable-rust-ci.yml" << 'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+s = s.replace("    name: Coverage\n    needs: lint\n", "    name: Coverage\n    needs: test\n", 1)
+open(p, "w").write(s)
+PY
+caught "a Coverage job that waits for Test is caught" "Coverage must need only the lint job"
+
 exit "$fail"

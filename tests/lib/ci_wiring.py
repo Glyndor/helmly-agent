@@ -33,6 +33,18 @@ What it holds in place:
    the closed list of inputs each reusable workflow takes, and the lines of the
    plan step that name the script or the map, which a pull request must read
    from its base commit.
+7. No job can write to Actions, judged on EFFECTIVE permissions (a job inherits
+   its workflow's, and `write-all` counts), and every workflow declares its
+   permissions. Nothing here cancels or starts runs: the other workflows of a
+   commit are security analyses and are never cancelled.
+   The dependency audit has no plan, so no functional failure leaves a
+   commit without it, and each suite job starts even when the plan failed
+   (`!cancelled()`) and skips only on an explicit `false`.
+8. No `run:` text interpolates `github.event.*` or `github.head_ref`; they
+   enter through `env:`.
+9. The two inputs that can turn a required job off by being emptied are not
+   empty in ci.yml: `test-command` of the shell suite and `coverage-threshold`
+   of the Rust suite. A skipped required check reports success.
 """
 
 import json
@@ -469,6 +481,61 @@ def check_shape(findings: list) -> None:
 	cmap = json.loads((ROOT / ".github" / "ci-map.json").read_text(encoding="utf-8"))
 	if printed != set(cmap["suites"]):
 		findings.append(f"ci.yml: the fallback of the plan step answers for {sorted(printed)} and the map has {sorted(cmap['suites'])}")
+def actions_permission(perms: object) -> str:
+	"""`write`, `read` or `none` for the `actions` scope of a permissions value."""
+	if perms == "write-all":
+		return "write"
+	if perms == "read-all":
+		return "read"
+	if isinstance(perms, dict):
+		return str(perms.get("actions", "none"))
+	return "none"
+
+
+def check_write_token(findings: list) -> None:
+	"""No job writes to Actions: nothing in this repository cancels or starts runs."""
+	for path in sorted(WORKFLOWS.glob("*.yml")):
+		doc = load_yaml(path)
+		if "permissions" not in doc:
+			findings.append(f"{path.name}: declares no top-level permissions, so its token is whatever the repository default is")
+		if actions_permission(doc.get("permissions")) == "write":
+			findings.append(f"{path.name}: the token can write to Actions at workflow level")
+		for job_id, job in (doc.get("jobs") or {}).items():
+			effective = job["permissions"] if "permissions" in job else doc.get("permissions")
+			if actions_permission(effective) == "write":
+				findings.append(f"{path.name}: job {job_id!r} can write to Actions")
+
+
+def check_tests_run_once(findings: list) -> None:
+	"""The Rust suite builds and runs the tests once: Test only without a threshold, Coverage after lint."""
+	jobs = load_yaml(WORKFLOWS / "reusable-rust-ci.yml")["jobs"]
+	if "inputs.coverage-threshold == 0" not in str(jobs.get("test", {}).get("if", "")):
+		findings.append("reusable-rust-ci.yml: the Test job must run only when there is no coverage threshold, or the suite is built and run twice")
+	if jobs.get("coverage", {}).get("needs") != "lint":
+		findings.append("reusable-rust-ci.yml: Coverage must need only the lint job, which is the cheap gate before the one build of the tests")
+	if jobs.get("test", {}).get("needs") != "lint":
+		findings.append("reusable-rust-ci.yml: Test must need the lint job")
+
+
+def check_suite_jobs_start(findings: list) -> None:
+	"""Each suite job starts even if the plan failed, and skips only on an explicit `false`."""
+	jobs = load_yaml(WORKFLOWS / "ci.yml")["jobs"]
+	for job_id in ("workflow-lint", "shell", "rust"):
+		condition = str(jobs.get(job_id, {}).get("if", ""))
+		if "!cancelled()" not in condition:
+			findings.append(f"ci.yml: job {job_id!r} has no `!cancelled()` in its `if`, so a failed plan would leave it skipped and green")
+		if "== 'true'" in condition:
+			findings.append(f"ci.yml: job {job_id!r} runs only on an explicit true; a missing plan must run it")
+
+
+def check_event_values_via_env(findings: list) -> None:
+	for path in sorted(WORKFLOWS.glob("*.yml")):
+		for job_id, job in (load_yaml(path).get("jobs") or {}).items():
+			for step in job.get("steps") or []:
+				if re.search(r"\$\{\{\s*(?:github\.event\.|github\.head_ref)", str(step.get("run", ""))):
+					findings.append(f"{path.name}: job {job_id!r} puts a github.event value inside run:, not env:")
+
+
 def main() -> int:
 	findings: list = []
 	try:
@@ -481,6 +548,10 @@ def main() -> int:
 		check_reusables_honour_run(findings)
 		check_triggers(findings)
 		check_gate(findings)
+		check_write_token(findings)
+		check_suite_jobs_start(findings)
+		check_tests_run_once(findings)
+		check_event_values_via_env(findings)
 		check_switches(findings)
 		check_shape(findings)
 	except (OSError, ValueError, KeyError, yaml.YAMLError) as exc:

@@ -115,7 +115,7 @@ expect_has .github/actions/cargo-audit/action.yml workflows shell
 # everything), or a change to the CI is merged with the test that guards it unrun.
 for path in .github/workflows/release.yml .github/workflows/codeql.yml .github/workflows/freshness.yml \
 	.github/workflows/reusable-rust-ci.yml .github/workflows/ci.yml .github/ci-map.json .github/required-checks.json \
-	.github/scripts/ci/decide.py .github/scripts/ci/cancel/others.sh .github/actions/cargo-audit/action.yml \
+	.github/scripts/ci/decide.py .github/actions/cargo-audit/action.yml \
 	tests/lib/ci_wiring.py tests/ci-wiring.test.sh; do
 	case " $(decide "$MAP" "$path") " in
 		*" shell "*) r=runs-the-shell-suite ;;

@@ -22,9 +22,9 @@ jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
-    # No run has been measured yet; 30 minutes is a ceiling for the Rust extraction.
-    # Lower it to the slowest green run plus a margin once there are some.
-    timeout-minutes: 30
+    # Measured 2026-11-22 on the first runs: rust 277 s mean and 329 s worst
+    # over 2 runs, actions 41 s. Twenty minutes leaves room for a larger tree.
+    timeout-minutes: 20
     permissions:
       contents: read
       security-events: write
