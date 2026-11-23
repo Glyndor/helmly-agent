@@ -7,42 +7,13 @@
 # is broken. The second part is what makes the first one worth reading: a check
 # that has never been seen to fail may be checking nothing.
 
-# shellcheck disable=SC2016 # the text sabotaged below is literal workflow text, `${{ ... }}` included
+# shellcheck disable=SC2016,SC1091,SC2154 # the text sabotaged below is literal workflow text, `${{ ... }}` included; the helpers are sourced from lib/ (linted there as its own file) and set `fail`
 set -euo pipefail
 
 # The helpers are Python; keep their bytecode out of the tree being tested.
 export PYTHONDONTWRITEBYTECODE=1
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
-
-fail=0
-check() {
-	if [[ "$2" == "$3" ]]; then
-		printf 'ok   %s\n' "$1"
-	else
-		printf 'FAIL %s\n       expected: %s\n       actual:   %s\n' "$1" "$2" "$3"
-		fail=1
-	fi
-}
-
-# A copy of the files the checks read, so a case can break one without touching the tree.
-fresh_copy() {
-	rm -rf "$WORK/tree"
-	mkdir -p "$WORK/tree/.github" "$WORK/tree/tests"
-	cp -r "$ROOT/.github/workflows" "$WORK/tree/.github/workflows"
-	cp -r "$ROOT/.github/actions" "$WORK/tree/.github/actions"
-	cp "$ROOT/.github/ci-map.json" "$ROOT/.github/required-checks.json" "$WORK/tree/.github/"
-	cp -r "$ROOT/tests/lib" "$WORK/tree/tests/lib"
-}
-
-# finding: runs the checks on the copy and prints the first finding, or "none".
-finding() {
-	local out rc=0
-	out="$(python3 "$WORK/tree/tests/lib/ci_wiring.py" 2>&1)" || rc=$?
-	if [[ "$rc" -eq 0 ]]; then echo none; else printf '%s\n' "$out" | head -n 1; fi
-}
+source "$(dirname "${BASH_SOURCE[0]}")/lib/wiring.sh"
 
 fresh_copy
 check "the real workflows satisfy every rule" "none" "$(finding)"
@@ -102,29 +73,6 @@ out="$(finding)"
 check "a ci.yml that no longer runs on pull requests loses its checks" "required check on develop is emitted by no workflow: 'ci-gate'" "$out"
 
 # --- the exact shape: each sabotage below passes a check that only counts names -------
-# sabotage <file> <old> <new>: replace the first occurrence in the copy, failing loudly if absent.
-sabotage() {
-	python3 - "$WORK/tree/.github/workflows/$1" "$2" "$3" << 'PY'
-import sys
-path, old, new = sys.argv[1:4]
-text = open(path).read()
-if old not in text:
-	sys.exit("sabotage target not found: " + old)
-open(path, "w").write(text.replace(old, new, 1))
-PY
-}
-# caught <name> <expected substring>: the checks print the substring somewhere
-caught() {
-	local out rc=0
-	out="$(python3 "$WORK/tree/tests/lib/ci_wiring.py" 2>&1)" || rc=$?
-	if [[ "$rc" -ne 0 ]] && grep -qF -- "$2" <<< "$out"; then
-		printf 'ok   %s\n' "$1"
-	else
-		printf 'FAIL %s\n       expected a finding containing: %s\n       got (exit %s): %s\n' "$1" "$2" "$rc" "$(head -n 3 <<< "$out")"
-		fail=1
-	fi
-}
-
 fresh_copy
 sabotage ci.yml 'run: ${{ needs.decide.outputs.rust }}' 'run: ${{ needs.decide.outputs.shell }}'
 caught "the shell verdict handed to the Rust suite is caught" "job 'rust' must pass \`run: \${{ needs.decide.outputs.rust }}\`"

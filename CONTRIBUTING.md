@@ -37,6 +37,11 @@ to this repository's git. That is why this repository can require pull
 requests and status checks, and why release promotion lands by merge commit
 rather than squash.
 
+The job that signs and publishes runs in the `release` environment, whose
+deployment policy accepts `main` and `v*` tags only, and the signing key is a
+secret of that environment. A manual run from any other branch can rehearse a
+release (`dry_run`) but never reaches the key.
+
 ## Branch flow
 
 ```
