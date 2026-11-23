@@ -37,27 +37,68 @@ pub async fn perform_update(version: &str, download_url: &str, sig_url: &str) ->
 		.await
 		.context("SSRF check for sig URL")?;
 
-	// Download binary
-	let binary_bytes = download_bytes(&bin_client, download_url)
-		.await
-		.context("download binary")?;
-
-	// Download signature
-	let sig_bytes = download_bytes(&sig_client, sig_url)
-		.await
-		.context("download signature")?;
-
-	// Verify Ed25519 signature
-	verify_signature(&binary_bytes, &sig_bytes)
-		.context("signature verification failed — update aborted")?;
+	let binary_bytes = fetch_verified(
+		&bin_client,
+		download_url,
+		&sig_client,
+		sig_url,
+		RELEASE_PUBKEYS,
+		MAX_DOWNLOAD_BYTES,
+	)
+	.await?;
 
 	tracing::info!(version, bytes = binary_bytes.len(), "signature verified");
 
-	let target = PathBuf::from(AGENT_BINARY);
-	let prev = PathBuf::from(format!("{AGENT_BINARY}.prev"));
-	let tmp = PathBuf::from(format!("{AGENT_BINARY}.new"));
+	swap_binary(&binary_bytes, &PathBuf::from(AGENT_BINARY))?;
 
-	std::fs::write(&tmp, &binary_bytes).with_context(|| format!("write to {tmp:?}"))?;
+	tracing::info!(version, "binary swapped — restarting via systemd");
+
+	// Systemd will restart the unit (Restart=always in the service unit).
+	// Exit 0 so systemd records a clean restart, not a failure.
+	std::process::exit(0);
+}
+
+/// Download the binary and its signature and return the binary only if the signature
+/// verifies against `keyring`. Nothing is written to disk here: a release that fails any
+/// step is dropped with the buffer.
+pub(crate) async fn fetch_verified(
+	bin_client: &reqwest::Client,
+	download_url: &str,
+	sig_client: &reqwest::Client,
+	sig_url: &str,
+	keyring: &[[u8; 32]],
+	max_bytes: usize,
+) -> Result<Vec<u8>> {
+	let binary_bytes = download_bytes_with(bin_client, download_url, max_bytes)
+		.await
+		.context("download binary")?;
+
+	let sig_bytes = download_bytes_with(sig_client, sig_url, max_bytes)
+		.await
+		.context("download signature")?;
+
+	verify_signature_with(&binary_bytes, &sig_bytes, keyring)
+		.context("signature verification failed — update aborted")?;
+
+	Ok(binary_bytes)
+}
+
+/// Put `binary` at `target`: write it beside the target as `.new`, make it executable, keep
+/// the binary it replaces as `.prev`, and move the new one over the target with a rename.
+///
+/// The rename is what makes the swap safe for a running agent: the old file is not written
+/// to (that fails with ETXTBSY for an executable that is running), it is replaced, and the
+/// process that has it open keeps reading the old bytes.
+pub(crate) fn swap_binary(binary: &[u8], target: &std::path::Path) -> Result<()> {
+	let beside = |suffix: &str| {
+		let mut name = target.as_os_str().to_owned();
+		name.push(suffix);
+		PathBuf::from(name)
+	};
+	let prev = beside(".prev");
+	let tmp = beside(".new");
+
+	std::fs::write(&tmp, binary).with_context(|| format!("write to {tmp:?}"))?;
 
 	// Make it executable
 	#[cfg(unix)]
@@ -70,17 +111,12 @@ pub async fn perform_update(version: &str, download_url: &str, sig_url: &str) ->
 
 	// Back up current binary to .prev before swap
 	if target.exists() {
-		std::fs::copy(&target, &prev).context("backup agent binary to .prev")?;
+		std::fs::copy(target, &prev).context("backup agent binary to .prev")?;
 	}
 
 	// Atomic rename: tmp → canonical path (POSIX atomic on same filesystem)
-	std::fs::rename(&tmp, &target).with_context(|| format!("rename {tmp:?} → {target:?}"))?;
-
-	tracing::info!(version, "binary swapped — restarting via systemd");
-
-	// Systemd will restart the unit (Restart=always in the service unit).
-	// Exit 0 so systemd records a clean restart, not a failure.
-	std::process::exit(0);
+	std::fs::rename(&tmp, target).with_context(|| format!("rename {tmp:?} → {target:?}"))?;
+	Ok(())
 }
 
 /// Spawn a background task that monitors agent startup health.
@@ -179,7 +215,7 @@ where
 	Err(reason.to_string())
 }
 
-/// Inner download loop extracted from `download_bytes` so tests can
+/// Inner download loop, with the cap as a parameter so tests can
 /// drive it with a tiny `max_bytes` cap (200 MiB is impractical in a
 /// unit test). The HTTP fetch path, status check, Content-Length cap,
 /// and body-length cap are unchanged — this is the same code with a
@@ -213,9 +249,8 @@ pub(crate) async fn download_bytes_with(
 	Ok(bytes.to_vec())
 }
 
-async fn download_bytes(client: &reqwest::Client, url: &str) -> Result<Vec<u8>> {
-	download_bytes_with(client, url, 200 * 1024 * 1024).await
-}
+/// Largest download the updater accepts, for the binary and for its signature.
+const MAX_DOWNLOAD_BYTES: usize = 200 * 1024 * 1024;
 
 /// C2: two-slot release verify pubkey, mirroring `podup`'s `RELEASE_PUBKEYS`
 /// (`standards/releases/index.md:52-58`). Slot 0 is the active signing
@@ -248,7 +283,7 @@ pub(crate) const RELEASE_VERIFY_KEY_B64: &str = "HFv7vg5FCY7YyKUDbJhaQSfB9SboJGS
 
 /// Iterate non-zeroed pubkey slots in `keyring` and accept the first
 /// one that verifies. Zeroed slots are skipped. If none verify, fail
-/// closed. `verify_signature` calls this with the embedded
+/// closed. `fetch_verified` calls this with the embedded
 /// `RELEASE_PUBKEYS`; tests call it with synthetic keys.
 fn verify_signature_with(binary: &[u8], sig_bytes: &[u8], keyring: &[[u8; 32]]) -> Result<()> {
 	let sig_arr: [u8; 64] = sig_bytes
@@ -284,10 +319,6 @@ fn verify_signature_with(binary: &[u8], sig_bytes: &[u8], keyring: &[[u8; 32]]) 
 			anyhow::anyhow!("release signature did not verify against any non-zeroed slot")
 		}))
 	}
-}
-
-fn verify_signature(binary: &[u8], sig_bytes: &[u8]) -> Result<()> {
-	verify_signature_with(binary, sig_bytes, RELEASE_PUBKEYS)
 }
 
 fn validate_github_url(url: &str) -> Result<()> {
@@ -411,3 +442,5 @@ pub(crate) fn check_install_method_marker_at(path: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_attacks;
