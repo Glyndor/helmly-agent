@@ -128,10 +128,21 @@ case_in $W/reusable-rust-ci.yml "an outcome that no longer requires coverage is 
 	'want coverage "$COVERAGE" success' 'want coverage "$COVERAGE" skipped'
 
 # --- security results are not cancelled -----------------------------------------------------------
-case_in $W/ci.yml "a gate workflow that cancels the run in progress is caught" "must not sit in a concurrency group that cancels the run in progress" \
-	'  cancel-in-progress: false' "  cancel-in-progress: \${{ github.event_name == 'pull_request' }}"
-case_in $W/codeql.yml "an analysis that a newer run cancels is caught" "must not sit in a concurrency group that cancels the run in progress" \
-	'  cancel-in-progress: false' "  cancel-in-progress: \${{ github.event_name == 'pull_request' }}"
+C="the concurrency must be the pinned group, cancelling only a run of the same pull request"
+case_in $W/ci.yml "a gate workflow that never cancels, so every push waits behind the last one, is caught" "$C" \
+	"  cancel-in-progress: \${{ github.event_name == 'pull_request' }}" '  cancel-in-progress: false'
+case_in $W/ci.yml "a gate workflow that cancels a push to develop too is caught" "$C" \
+	"  cancel-in-progress: \${{ github.event_name == 'pull_request' }}" '  cancel-in-progress: true'
+case_in $W/ci.yml "a gate workflow whose group is the same for every pull request is caught" "$C" \
+	'  group: ci-${{ github.event.pull_request.number || github.sha }}' '  group: ci'
+case_in $W/ci.yml "a gate workflow whose group is the commit for a pull request too is caught" "$C" \
+	'  group: ci-${{ github.event.pull_request.number || github.sha }}' '  group: ci-${{ github.sha }}'
+case_in $W/codeql.yml "an analysis that never cancels is caught" "$C" \
+	"  cancel-in-progress: \${{ github.event_name == 'pull_request' }}" '  cancel-in-progress: false'
+case_in $W/codeql.yml "an analysis that a push or the weekly run cancels is caught" "$C" \
+	"  cancel-in-progress: \${{ github.event_name == 'pull_request' }}" '  cancel-in-progress: true'
+case_in $W/codeql.yml "an analysis whose weekly run shares a group with the next is caught" "$C" \
+	"'pull_request' && github.ref || github.run_id }}" "'pull_request' && github.ref || github.workflow }}"
 case_in $W/audit.yml "a scheduled audit that stops at the first failing branch is caught" "must use fail-fast: false" \
 	'      fail-fast: false' '      fail-fast: true'
 

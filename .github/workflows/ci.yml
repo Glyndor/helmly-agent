@@ -61,13 +61,14 @@ on:
 permissions:
   contents: read
 
-# A run is never cancelled by a newer one. The dependency audit and the DCO check
-# are jobs of this workflow, and a security result is not something a later push
-# gets to cancel: a newer run for the same pull request waits behind the running
-# one (and replaces an older run that has not started), it does not cancel it.
+# A newer run of the same pull request cancels the older one: the new run has to pass
+# on its own, and the old one answers about a commit that is no longer the head. That
+# includes the audit and the DCO check, which the new run repeats. Nothing else cancels
+# a run: a push to develop or main is grouped by its commit, so each one runs to the
+# end, and a failure of another workflow never reaches this one.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   decide:

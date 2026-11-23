@@ -16,8 +16,10 @@ permissions:
 
 concurrency:
   group: codeql-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-  # The analysis is a security result, so a newer run never cancels it.
-  cancel-in-progress: false
+  # A newer run of the same pull request cancels the older one, which answers about a
+  # commit that is no longer the head. A push and the weekly run have a group of their
+  # own (the run) and are never cancelled.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   analyze:
