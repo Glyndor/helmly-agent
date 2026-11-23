@@ -225,7 +225,10 @@ that is empty today.
 check gate the Rust suite on a pull request; inside it the tests are built and
 run once, after lint, under coverage. The dependency audit has no plan and is not
 behind any gate, and nothing is cancelled across workflows: CodeQL, the audit and
-DCO are never left unrun by a functional failure.
+DCO are never left unrun by a functional failure. A newer run of the same pull
+request cancels the older one of `ci.yml` and of CodeQL, which has to be repeated
+anyway; a push to `develop` or `main` and the weekly runs are grouped by commit or
+by run and are never cancelled.
 
 **Job ids are load-bearing.** A required status check is named by its job, and
 for a reusable by `<caller job id> / <inner job name>`, so renaming a job renames

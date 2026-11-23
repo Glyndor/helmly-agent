@@ -208,12 +208,30 @@ def check_audit_action(findings: list) -> None:
 		findings.append("cargo-audit/action.yml: a step of the contract is missing")
 
 
+CANCEL_ON_PULL_REQUEST = "${{ github.event_name == 'pull_request' }}"
+CONCURRENCY = {
+	"ci.yml": {"group": "ci-${{ github.event.pull_request.number || github.sha }}", "cancel-in-progress": CANCEL_ON_PULL_REQUEST},
+	"codeql.yml": {
+		"group": "codeql-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}",
+		"cancel-in-progress": CANCEL_ON_PULL_REQUEST,
+	},
+}
+
+
 def check_security_concurrency(findings: list) -> None:
-	"""The audit, the DCO check and CodeQL are never cancelled by a newer run, and one branch failing the audit hides no other."""
-	for name in ("ci.yml", "codeql.yml", "audit.yml"):
-		concurrency = load_yaml(WORKFLOWS / name).get("concurrency") or {}
-		if concurrency.get("cancel-in-progress") not in (None, False):
-			findings.append(f"{name}: a security result must not sit in a concurrency group that cancels the run in progress")
+	"""A newer run of the same pull request cancels the older one, and nothing else cancels a run.
+
+	The new run has to pass by itself, so the old one is of no use. What must not happen is a
+	push to develop or main, or the weekly run, being cancelled by another run: those groups
+	are by commit or by run, and `cancel-in-progress` is on only for a pull request. The groups
+	and the condition are pinned whole. The weekly audit never cancels, and one branch failing
+	it hides no other.
+	"""
+	for name, expected in CONCURRENCY.items():
+		if load_yaml(WORKFLOWS / name).get("concurrency") != expected:
+			findings.append(f"{name}: the concurrency must be the pinned group, cancelling only a run of the same pull request (cancel-in-progress: {CANCEL_ON_PULL_REQUEST})")
+	if (load_yaml(WORKFLOWS / "audit.yml").get("concurrency") or {}).get("cancel-in-progress") not in (None, False):
+		findings.append("audit.yml: the weekly audit must not sit in a concurrency group that cancels the run in progress")
 	matrix = (((load_yaml(WORKFLOWS / "audit.yml").get("jobs") or {}).get("audit") or {}).get("strategy") or {})
 	if matrix.get("fail-fast") is not False:
 		findings.append("audit.yml: the audit of each branch must use fail-fast: false")
