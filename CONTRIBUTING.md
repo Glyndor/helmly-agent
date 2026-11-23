@@ -156,6 +156,7 @@ CI is split by responsibility rather than gathered in one file:
 | file | what fails there |
 |---|---|
 | `ci.yml` | rustfmt, clippy, tests, coverage, shellcheck, workflow-lint, Dependabot freshness, audit freshness |
+| `codeql.yml` | CodeQL analysis of the workflows and the Rust code, on pull requests and pushes to `develop` and `main`, and weekly |
 | `audit.yml` | `cargo audit` (RUSTSEC) and `cargo deny`, weekly and on push |
 | `dco.yml` | every commit on the pull request carries a `Signed-off-by:` trailer |
 | `main-guard.yml` | a pull request into `main` whose head is not `develop` |
