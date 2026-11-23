@@ -11,6 +11,11 @@ from ci_wiring_core import *  # noqa: F403
 from ci_wiring_core import _no_duplicate_keys  # noqa: F401
 
 
+# The events that run for a pull request, with the base it is aimed at. A required name must be
+# produced by one of them, once, and by no other workflow.
+PR_EVENTS = ("pull_request", "pull_request_target")
+
+
 def check_required(findings: list) -> None:
 	"""Each required check is produced by exactly one workflow and one event, for the base it guards.
 
@@ -26,8 +31,8 @@ def check_required(findings: list) -> None:
 		made.setdefault(name.lower(), set()).update(who)
 	for branch, names in required.items():
 		for name in names:
-			relevant = {(wf, ev) for wf, ev, base in made.get(name.lower(), set()) if ev != "pull_request" or base in (branch, "*")}
-			if not any(ev == "pull_request" for _, ev in relevant):
+			relevant = {(wf, ev) for wf, ev, base in made.get(name.lower(), set()) if ev not in PR_EVENTS or base in (branch, "*")}
+			if not any(ev in PR_EVENTS for _, ev in relevant):
 				findings.append(f"required check on {branch} is emitted by no workflow: {name!r}")
 			elif len(relevant) > 1:
 				findings.append(f"required check {name!r} on {branch} is produced by more than one workflow or event: {sorted(relevant)}")

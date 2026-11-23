@@ -56,6 +56,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ci_wiring_ci import *  # noqa: E402,F403
 from ci_wiring_contract import *  # noqa: E402,F403
 from ci_wiring_core import *  # noqa: E402,F403
+from ci_wiring_guard import *  # noqa: E402,F403
 from ci_wiring_names import *  # noqa: E402,F403
 from ci_wiring_release import *  # noqa: E402,F403
 
@@ -75,6 +76,7 @@ def main() -> int:
 		check_gate(findings)
 		check_bases(findings)
 		check_contract(findings)
+		check_guard(findings)
 		check_write_token(findings)
 		check_suite_jobs_start(findings)
 		check_tests_run_once(findings)
