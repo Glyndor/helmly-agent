@@ -407,6 +407,7 @@ GATE_RESULTS = {
 	"SHELL_SUITE": "shell",
 	"RUST": "rust",
 	"AUDIT": "audit",
+	"STRUCTURE": "structure",
 }
 GATE_PLANS = {"PLAN_WORKFLOWS": "workflows", "PLAN_SHELL": "shell", "PLAN_RUST": "rust"}
 # The only entries ci.yml may pass to each reusable workflow. Anything else, a
@@ -455,6 +456,14 @@ def check_shape(findings: list) -> None:
 	audit = jobs.get("audit", {})
 	if "if" in audit or "needs" in audit:
 		findings.append("ci.yml: the audit job has a condition or a dependency; it runs on every pull request and push, with no plan")
+	structure = jobs.get("structure", {})
+	if set(structure.get("needs") or []) != {"dco", "workflow-lint", "shell"} or "outputs.structure" in str(structure.get("if", "")):
+		findings.append("ci.yml: the structure job must wait for the three cheap gates and have no plan of its own")
+	step = (structure.get("steps") or [{}, {}])[-1]
+	run = str(step.get("run", ""))
+	for needle in ('git show "$BASE_SHA:.github/scripts/ci/structure.py"', 'git show "$BASE_SHA:.github/structure.json"', 'python3 .github/scripts/ci/structure.py --exceptions .github/structure.json || bad=1', 'python3 "$tmp/structure.py" --exceptions "$tmp/structure.json" || bad=1'):
+		if needle not in run:
+			findings.append(f"ci.yml: the structure step must judge with both copies, and is missing: {needle}")
 	steps = jobs.get("decide", {}).get("steps") or []
 	run = "\n".join(str(step.get("run", "")) for step in steps)
 	lines = [line.strip() for line in run.splitlines()]

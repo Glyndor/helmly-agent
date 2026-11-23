@@ -45,7 +45,7 @@ PY
 # request, except for the assignments given.
 gate() {
 	local rc=0
-	env EVENT=pull_request DECIDE=success DCO=success WORKFLOW_LINT=success SHELL_SUITE=success RUST=success AUDIT=success \
+	env EVENT=pull_request DECIDE=success DCO=success WORKFLOW_LINT=success SHELL_SUITE=success RUST=success AUDIT=success STRUCTURE=success \
 		PLAN_WORKFLOWS=true PLAN_SHELL=true PLAN_RUST=true "$@" bash "$WORK/gate.sh" > "$WORK/out" 2>&1 || rc=$?
 	echo "$rc"
 }
@@ -70,6 +70,9 @@ check "a suite skipped by a failed gate before it, plan true: red" "1" "$(gate S
 check "a suite that failed: red" "1" "$(gate SHELL_SUITE=failure)"
 check "a suite that failed although the plan said false: red" "1" "$(gate RUST=failure PLAN_RUST=false)"
 check "the audit failing: red" "1" "$(gate AUDIT=failure)"
+check "the structure check failing: red" "1" "$(gate STRUCTURE=failure)"
+check "the structure check skipped, which no plan can excuse: red" "1" "$(gate STRUCTURE=skipped)"
+check "the structure check skipped on a push, still no plan to excuse it: red" "1" "$(gate EVENT=push DCO=skipped STRUCTURE=skipped)"
 check "a suite that was cancelled: red" "1" "$(gate AUDIT=cancelled)"
 
 check "DCO failed on a pull request: red" "1" "$(gate DCO=failure)"

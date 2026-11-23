@@ -64,7 +64,7 @@ check "a ci-gate that does not run always is caught" \
 	"ci.yml: ci-gate must run \`if: \${{ always() }}\`, or a skipped gate reports success" "$(finding)"
 
 fresh_copy
-sed -i 's/^    needs: \[decide, dco, workflow-lint, shell, rust, audit\]$/    needs: [decide, dco, workflow-lint, shell, rust]/' "$WORK/tree/.github/workflows/ci.yml"
+sed -i 's/^    needs: \[decide, dco, workflow-lint, shell, rust, audit, structure\]$/    needs: [decide, dco, workflow-lint, shell, rust, structure]/' "$WORK/tree/.github/workflows/ci.yml"
 check "a job that ci-gate no longer judges is caught" "ci.yml: ci-gate does not need 'audit', so its result is not judged" "$(finding)"
 
 fresh_copy
@@ -477,5 +477,16 @@ s = s.replace("    name: Coverage\n    needs: lint\n", "    name: Coverage\n    
 open(p, "w").write(s)
 PY
 caught "a Coverage job that waits for Test is caught" "Coverage must need only the lint job"
+
+# --- the structure check has no plan ----------------------------------------------------
+fresh_copy
+sabotage ci.yml '  structure:
+    needs: [dco, workflow-lint, shell]' "  structure:
+    needs: [decide, dco, workflow-lint, shell]"
+caught "a structure job that waits for the plan is caught" "the structure job must wait for the three cheap gates and have no plan of its own"
+
+fresh_copy
+sabotage ci.yml "python3 .github/scripts/ci/structure.py --exceptions .github/structure.json || bad=1" "true"
+caught "a structure step that stops judging with the tree's copy is caught" "the structure step must judge with both copies"
 
 exit "$fail"
