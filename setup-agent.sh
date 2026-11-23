@@ -15,7 +15,9 @@
 #   sudo ./setup-agent.sh
 #
 # Requirements:
-#   - Debian/Ubuntu or RHEL-based Linux (amd64 / arm64)
+#   - Debian/Ubuntu (amd64 / arm64). The dependency steps use apt; the RHEL
+#     branches of _detect_distro only remove conflicting packages and install
+#     python3-cryptography, so an RHEL-based host is not installable by this script.
 #   - Run as root
 #   - Dashboard WireGuard pubkey and PSK (shown at dashboard install completion)
 # -----------------------------------------------------------------------------
@@ -161,7 +163,7 @@ if [[ "$TOTAL_RAM_MB" -lt 512 ]]; then
 fi
 log_ok "RAM: ${TOTAL_RAM_MB} MB (minimum 512 MB satisfied)"
 
-# Disk pre-check (§1.4) — PostgreSQL image, agent binary, podup and
+# Disk pre-check (§1.4) — PostgreSQL image, agent binary and
 # org/container data easily exceed 2 GB; bail out early instead of failing mid-
 # install when a `pull` or container start exhausts the volume.
 FREE_DISK_MB=$(df -BM --output=avail / 2>/dev/null | tail -1 | tr -dc '0-9')

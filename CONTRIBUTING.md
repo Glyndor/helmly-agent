@@ -30,7 +30,8 @@ containers, nftables firewall rules, WireGuard tunnels and system
 maintenance. The release ships a static musl binary for `x86_64` and
 `arm64`, signed by an Ed25519 key that is pinned in `setup-agent.sh`,
 `update-agent.sh` and the Rust binary itself, and the three pins are
-checked against each other on every release.
+checked against each other on every release and by
+`tests/release-key-parity.test.sh` on every pull request.
 
 `release.yml` uploads binaries to GitHub Releases. It does not commit back
 to this repository's git. That is why this repository can require pull
@@ -103,7 +104,7 @@ cargo test --locked --all-features --workspace
 cargo llvm-cov --locked --workspace --all-features \
   --summary-only --json --output-path coverage.json
 ./tests/run.sh
-shellcheck -S style setup-agent.sh update-agent.sh tests/*.sh
+find . -type f \( -name '*.sh' -o -name '*.bash' \) -not -path './.git/*' -print0 | xargs -0 shellcheck -S style
 cargo audit --deny warnings
 cargo deny check
 python3 .github/scripts/ci/structure.py --exceptions .github/structure.json
@@ -131,8 +132,8 @@ Two rules matter more than coverage:
 
 **A test you have not watched fail is not a test.** Before claiming a
 check works, delete or invert the control it covers, run it, and confirm
-it goes red for the reason it names. The reusable workflow comments
-(`reusable-workflow-lint.yml` is the most recent witness) name three
+it goes red for the reason it names. The comment in the pull request template
+(`.github/PULL_REQUEST_TEMPLATE.md`) names three
 ways a sabotage lies: it changes nothing, it changes something the test
 does not look at, and it goes red from somewhere else entirely. All
 three have shipped to a green pipeline in this organisation in a single
@@ -154,9 +155,12 @@ the number in the same pull request that raises coverage, never
 silently.
 
 The two installer scripts (`setup-agent.sh`, `update-agent.sh`) are the
-only shell in the repository and are linted at shellcheck's strictest
-level (`-S style`). Both run as root on a fresh server, which is the
-worst place to find out a script is broken. `setup-agent.sh` has 944 code
+only shell the product ships. The repository has more (the shell tests,
+`tests/lib/wiring.sh` and the helpers of the release workflow under
+`.github/scripts/release/`), and all of it is linted at shellcheck's
+strictest level (`-S style`) by `reusable-shell-ci.yml`, which finds every
+`.sh` and `.bash` file. The two installers run as root on a fresh server,
+which is the worst place to find out a script is broken. `setup-agent.sh` has 944 code
 lines, the one file over the 500-line limit; `.github/structure.json` lists it
 with a ceiling that can only go down (#153).
 
@@ -173,7 +177,7 @@ CI is split by responsibility rather than gathered in one file:
 | `freshness.yml` | weekly: fails when Dependabot has gone quiet |
 | `dependabot-security-watch.yml` | lists Dependabot security pull requests stuck against `main` |
 | `main-guard.yml` | a pull request into `main` whose head is not `develop` |
-| `release.yml` | tag-driven release, signing, attestation, pinned-key parity |
+| `release.yml` | on a `v*` tag, or by hand: verify the tag and the version, run the Rust suite, build both architectures with `contents: read` only, attest the provenance, then sign and publish in the `release` environment. A manual run with `dry_run` builds and signs with a throwaway key and publishes nothing |
 
 Every reusable this repository calls lives in `.github/workflows/reusable-*.yml`.
 They are this repository's own files; nothing is pulled from another one.
