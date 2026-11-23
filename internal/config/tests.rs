@@ -337,7 +337,8 @@ fn seed_writes_b64_with_mode_0o600_atomically() {
 		let mode = std::fs::metadata(&path)
 			.expect("metadata")
 			.permissions()
-			.mode() & 0o777;
+			.mode()
+			& 0o777;
 		assert_eq!(mode, 0o600, "seeded file must be mode 0600; got {mode:o}");
 	}
 
