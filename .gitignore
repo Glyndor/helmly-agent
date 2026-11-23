@@ -16,3 +16,6 @@ fuzz/artifacts/
 
 # Build artifacts
 /target
+
+# Python bytecode the test helpers leave behind
+__pycache__/

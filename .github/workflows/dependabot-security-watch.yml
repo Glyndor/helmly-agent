@@ -76,4 +76,4 @@ jobs:
           set -euo pipefail
           gh pr list --repo "$REPO" --base main --state open --limit 100 \
             --json number,title,author,headRefName,createdAt \
-            | python3 .github/scripts/dependabot_security_watch.py
+            | python3 -I .github/scripts/dependabot_security_watch.py
